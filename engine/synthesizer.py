@@ -46,8 +46,12 @@ class Synthesizer:
                 lines.append(f"{pre}return {self._synth_expr(inputs[0])}" if inputs else f"{pre}return")
         return lines
 
+    def generate_code(self):
+        return "\n".join(self._write_world("root"))
+
+    
     def run(self):
-        code = "\n".join(self._write_world("root")).strip()
+        code = self.generate_code()
         print("🏗️ Synthesized Code:\n" + "-"*40 + "\n" + code + "\n" + "-"*40)
         print("🚀 Executing...")
         try: exec(code, {"__builtins__": __builtins__})
