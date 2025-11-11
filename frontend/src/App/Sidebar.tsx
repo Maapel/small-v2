@@ -1,7 +1,7 @@
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import useStore, { type RFState } from './store';
-import { Box, Braces, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Box, Braces, ChevronLeft, ChevronRight, X, FileText } from 'lucide-react';
 
 const selector = (state: RFState) => ({
   rawGraph: state.rawGraph,
@@ -11,8 +11,16 @@ const selector = (state: RFState) => ({
   toggle: state.toggleSidebar
 });
 
+// --- Selector for imports ---
+const importSelector = (state: RFState) => state.rawGraph.nodes.filter(n => n.type === 'IMPORT');
+
 export default function Sidebar() {
   const { rawGraph, currentWorld, enterWorld, isOpen, toggle } = useStore(useShallow(selector));
+  
+  // --- FIX: Wrap the selector in useShallow ---
+  // This prevents re-renders if the array contents are the same
+  const importNodes = useStore(useShallow(importSelector));
+  // --- END FIX ---
 
   const definitions = rawGraph.nodes.filter(
     (n) => n.world === currentWorld && ['FUNCTION_DEF', 'CLASS_DEF'].includes(n.type)
@@ -59,7 +67,7 @@ export default function Sidebar() {
           </h2>
         </div>
         
-        {/* --- List --- */}
+        {/* --- List (Definitions) --- */}
         <div className="flex-1 overflow-y-auto p-2 space-y-1 min-h-0">
           {definitions.length === 0 ? (
               <div className="p-4 text-slate-600 text-sm font-mono italic text-center">
@@ -83,7 +91,7 @@ export default function Sidebar() {
                     </div>
                     {node.data.params && (
                         <div className="text-slate-500 text-[10px] truncate font-mono mt-0.5">
-                            ({node.data.params.join(', ')})
+                            ({(node.data.params as any[]).map(p => p.name).join(', ')})
                         </div>
                     )}
                 </div>
@@ -94,6 +102,31 @@ export default function Sidebar() {
             );
           })}
         </div>
+        
+        {/* --- NEW: Imports Panel --- */}
+        <div className="shrink-0 border-t border-slate-800 flex flex-col min-h-0">
+            <h2 className="p-4 text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2 shrink-0">
+                Imports
+                <FileText size={16} className="text-slate-500" />
+            </h2>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1 min-h-0 bg-slate-950/50">
+                {importNodes.length === 0 ? (
+                    <div className="p-4 text-slate-600 text-sm font-mono italic text-center">
+                        No imports
+                    </div>
+                ) : importNodes.map((node) => (
+                    <div 
+                        key={node.id} 
+                        className="flex items-center gap-3 px-3 py-2 text-slate-400 font-mono text-xs"
+                    >
+                        <FileText size={14} className="shrink-0" />
+                        <span className="truncate" title={node.label}>{node.label}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+        {/* --- END NEW --- */}
+        
       </div>
     </div>
   );

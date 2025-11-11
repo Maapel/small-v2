@@ -1,33 +1,35 @@
-            # Reads 'modifier' from global scope (2 levels up)
-# 1. Global sequential setup
-global_start = 100
-modifier = 2
-    
-def complex_calculator(start_val):
-    # 2. Local sequential setup
-    current = start_val
-    step_size = 10 # <--- 'step_size' is local to complex_calculator
+import os
+import json
 
-    # 3. Nested definition (Depth 1)
-    #    'apply_step' is NOW INSIDE complex_calculator
-    def apply_step(val):
-        # 4. Deeply nested definition (Depth 2)
-        def limiter(x):
-            return x * modifier
+# Test function def, list/dict literals
+def find_high_scorers(data, threshold):
+    high_scorers = [] # Test LITERAL_LIST
+    
+    # Test 'for' loop (new container world)
+    for item in data:
+        try:
+            # Test 'dict' access (ACCESSOR node)
+            score = item["score"]
             
-        # Reads 'step_size' from parent scope (1 level up)
-        temp = val + step_size 
-        return limiter(temp)
+            # Test 'if' block (new container world)
+            if score > threshold:
+                # Test 'append' (ATTRIBUTE + CALL)
+                high_scorers.append(item["name"])
+        
+        # Test 'except' block (new container world)
+        except KeyError:
+            # This print call is inside the 'except' world
+            print(f"Skipping item, no 'score'")
 
-    # 5. Intermixed local sequence and calls
-    step1 = apply_step(current)
-    print(step1) 
-    
-    current = step1 + 5 # Sequence matters here!
-    
-    final = apply_step(current)
-    return final
+    return high_scorers
 
-# 6. Global sequential execution
-result = complex_calculator(global_start)
-print(result)
+# Test global data and function call
+all_data = [
+    {"name": "Alice", "score": 88},
+    {"name": "Bob", "score": 95},
+    {"name": "Charlie", "role": "admin"} # Test the 'except'
+]
+
+scorers = find_high_scorers(all_data, 90)
+
+print(f"High Scorers: {scorers}")

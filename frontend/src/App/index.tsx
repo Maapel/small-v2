@@ -5,7 +5,7 @@ import useStore, { type RFState } from './store';
 import { nodeTypes } from './Nodes';
 import Sidebar from './Sidebar';
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, FileJson, Menu } from 'lucide-react';
+import { ArrowLeft, FileJson, Menu, FileText } from 'lucide-react'; // Added FileText
 
 const selector = (state: RFState) => ({
   nodes: state.nodes,
@@ -24,16 +24,30 @@ const selector = (state: RFState) => ({
   toggleSidebar: state.toggleSidebar,
 });
 
-// --- NEW: Helper function to build breadcrumb paths ---
+// --- Helper function to build breadcrumb paths ---
 const buildBreadcrumbPath = (graph: RFState['rawGraph'], worldStack: string[], currentWorld: string) => {
     const path = [...worldStack, currentWorld];
     return path.map(worldId => {
         if (worldId === 'root') return { id: 'root', label: 'root' };
+        if (worldId === 'world_imports') return { id: 'world_imports', label: 'imports' }; // Handle imports world
         const node = graph.nodes.find(n => n.id === worldId);
         return { id: worldId, label: node?.label || '...' };
     });
 };
 // --- END NEW ---
+
+// --- UPDATED: List of types that can be "entered" ---
+const ZOOMABLE_NODE_TYPES = [
+    'FUNCTION_DEF', 
+    'CLASS_DEF', 
+    'FOR_BLOCK', 
+    'WHILE_BLOCK', 
+    'IF_BLOCK', 
+    'ELIF_BLOCK', 
+    'ELSE_BLOCK', 
+    'TRY_BLOCK', 
+    'EXCEPT_BLOCK'
+];
 
 export default function Flow() {
   const { 
@@ -45,7 +59,7 @@ export default function Flow() {
 
   const [isFileLoaded, setIsFileLoaded] = useState(false);
 
-  // --- UPDATED: Listen for BOTH world-changing events ---
+  // --- Listen for BOTH world-changing events ---
   useEffect(() => {
     const handleEnter = (e: any) => enterWorld(e.detail);
     const handleGoTo = (e: any) => goToWorld(e.detail); // <--- This now works
@@ -60,8 +74,8 @@ export default function Flow() {
   }, [enterWorld, goToWorld]); // Add goToWorld to dependency array
 
   const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
-      // This is now a fallback, as CALL nodes use the button
-      if (node.type === 'FUNCTION_DEF' || node.type === 'CLASS_DEF') {
+      // This is now a fallback, as many nodes have their own zoom button
+      if (node.type && ZOOMABLE_NODE_TYPES.includes(node.type)) {
           enterWorld(node.id);
       }
   }, [enterWorld]);
@@ -82,8 +96,6 @@ export default function Flow() {
   }, [loadGraph]);
 
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); }, []);
-
-  // --- REMOVED getWorldLabel, replaced by buildBreadcrumbPath ---
 
   // --- CENTERED DROPZONE LOGIC ---
   if (!isFileLoaded) {
@@ -127,6 +139,7 @@ export default function Flow() {
                 nodeColor={(n) => {
                     if (n.type === 'FUNCTION_DEF') return '#3b82f6';
                     if (n.type === 'CLASS_DEF') return '#8b5cf6';
+                    if (n.type && n.type.endsWith('_BLOCK')) return '#f97316';
                     return '#334155';
                 }}
                 maskColor="rgba(15, 23, 42, 0.6)" 
@@ -142,7 +155,7 @@ export default function Flow() {
                     ${isSidebarOpen && isFileLoaded ? 'mr-72' : ''} 
                 `}
             >
-                {/* UPDATED: Breadcrumbs now show full path */}
+                {/* Breadcrumbs now show full path */}
                 <div className="flex items-center gap-1 text-sm font-mono mr-2">
                     {buildBreadcrumbPath(rawGraph, worldStack, currentWorld).map((world, i, arr) => (
                         <React.Fragment key={world.id}>
@@ -165,6 +178,18 @@ export default function Flow() {
                 >
                     <ArrowLeft size={20} />
                 </button>
+                
+                <div className="h-6 w-px bg-slate-800" />
+
+                {/* --- NEW: Imports Button --- */}
+                <button 
+                    onClick={() => goToWorld('world_imports')}
+                    className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${currentWorld === 'world_imports' ? 'text-blue-400' : ''}`}
+                    title="Go to Imports"
+                >
+                    <FileText size={20} />
+                </button>
+                {/* --- END NEW --- */}
                 
                 <div className="h-6 w-px bg-slate-800" />
                 

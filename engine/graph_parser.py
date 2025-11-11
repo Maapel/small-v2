@@ -54,7 +54,7 @@ class WorldVisitor(cst.CSTVisitor):
         self.in_lvalue = False
         self.ignore_next_name = False
         self.symbols = SymbolTable()
-        self.world_definitions = {start_world: {}}
+        self.world_definitions = {start_world: {}, "world_imports": {}} # Add world_imports
         self.current_arg_index = 0
         # Tracks proxies to avoid duplicates: proxy_cache[world_id][original_var_id] -> proxy_node_id
         self.proxy_cache = {}
@@ -77,6 +77,8 @@ class WorldVisitor(cst.CSTVisitor):
             parent = self.active_parent_stack[-1]
             etype = "INPUT"
             edge_data = None
+            
+            # Determine edge type based on parent
             if parent["type"] == "ARGUMENT":
                 etype = "ARGUMENT"
                 edge_data = { "index": parent.get("index"), "keyword": parent.get("keyword") }
@@ -84,10 +86,32 @@ class WorldVisitor(cst.CSTVisitor):
                 etype = "OPERAND"
                 edge_data = {"index": parent.get("index", 0)}
             elif parent["type"] == "ASSIGNMENT": etype = "WRITES_TO"
+            elif parent["type"] == "LIST_ELEMENT":
+                etype = "LIST_ELEMENT"
+                edge_data = {"index": parent.get("index", 0)}
+            elif parent["type"] == "DICT_KEY":
+                etype = "DICT_KEY"
+                edge_data = {"index": parent.get("index", 0)}
+            elif parent["type"] == "DICT_VALUE":
+                etype = "DICT_VALUE"
+                edge_data = {"index": parent.get("index", 0)}
+            elif parent["type"] == "ACCESS_VALUE": etype = "ACCESS_VALUE"
+            elif parent["type"] == "ACCESS_KEY": etype = "ACCESS_KEY"
+            elif parent["type"] == "ATTRIBUTE_VALUE": etype = "ATTRIBUTE_VALUE"
+            elif parent["type"] == "ITERATES_ON": etype = "ITERATES_ON"
             
             self._add_edge(child_id, parent["node_id"], etype, data=edge_data)
 
-    # --- WORLDS ---
+    # --- IMPORTS (NEW) ---
+    def visit_Import(self, n):
+        self._add_node("IMPORT", cst.Module(n).code_for_node(n), world="world_imports")
+        return False # Do not visit children
+
+    def visit_ImportFrom(self, n):
+        self._add_node("IMPORT", cst.Module(n).code_for_node(n), world="world_imports")
+        return False # Do not visit children
+
+    # --- WORLDS / CONTAINERS ---
     def visit_FunctionDef(self, n):
         params_list = []
         for param in n.params.params:
@@ -124,6 +148,139 @@ class WorldVisitor(cst.CSTVisitor):
     def leave_ClassDef(self, n):
         self.current_world = self.world_stack.pop(); self.symbols.pop_scope()
 
+    # --- CONTROL FLOW (NEW) ---
+    def visit_For(self, n):
+        iter_str = cst.Module(n.iter).code_for_node(n.iter)
+        target_str = cst.Module(n.target).code_for_node(n.target)
+        label = f"for {target_str} in {iter_str}"
+        loop_id = self._add_node("FOR_BLOCK", label, {"target": target_str, "iter": iter_str})
+        
+        # Parse the iterator expression
+        self.active_parent_stack.append({"type": "ITERATES_ON", "node_id": loop_id})
+        n.iter.visit(self)
+        self.active_parent_stack.pop()
+
+        # Push new world for loop body
+        self.world_stack.append(self.current_world)
+        self.current_world = loop_id
+        self.symbols.push_scope()
+        
+        # Add loop variable(s) to the new scope
+        pid = self._add_node("VARIABLE", target_str, {"mode": "param", "version": 1}, world=self.current_world)
+        self.symbols.define_write(target_str, pid, self.current_world)
+        
+        n.body.visit(self) # Visit body
+        return False # We handled the body
+    
+    def leave_For(self, n):
+        self.current_world = self.world_stack.pop()
+        self.symbols.pop_scope()
+
+    def visit_While(self, n):
+        test_str = cst.Module(n.test).code_for_node(n.test)
+        loop_id = self._add_node("WHILE_BLOCK", f"while {test_str}", {"test": test_str})
+        
+        self.active_parent_stack.append({"type": "INPUT", "node_id": loop_id})
+        n.test.visit(self)
+        self.active_parent_stack.pop()
+
+        self.world_stack.append(self.current_world)
+        self.current_world = loop_id
+        self.symbols.push_scope()
+        n.body.visit(self)
+        return False
+
+    def leave_While(self, n):
+        self.current_world = self.world_stack.pop()
+        self.symbols.pop_scope()
+
+    def visit_If(self, n):
+        test_str = cst.Module(n.test).code_for_node(n.test)
+        if_id = self._add_node("IF_BLOCK", f"if {test_str}", {"test": test_str})
+        
+        self.active_parent_stack.append({"type": "INPUT", "node_id": if_id})
+        n.test.visit(self)
+        self.active_parent_stack.pop()
+
+        # Handle 'if' body
+        self.world_stack.append(self.current_world)
+        self.current_world = if_id
+        self.symbols.push_scope()
+        n.body.visit(self)
+        self.symbols.pop_scope()
+        self.current_world = self.world_stack.pop()
+
+        # Handle 'orelse' (elif or else)
+        if n.orelse:
+            self.active_parent_stack.append({"type": "NEXT_CLAUSE", "node_id": if_id})
+            
+            if isinstance(n.orelse, cst.If):
+                # This is an 'elif'
+                test_str = cst.Module(n.orelse.test).code_for_node(n.orelse.test)
+                elif_id = self._add_node("ELIF_BLOCK", f"elif {test_str}", {"test": test_str})
+                self._connect_to_active_parent(elif_id)
+                
+                # Visit the 'elif' as if it's a new 'If'
+                n.orelse.visit(self)
+                
+            elif isinstance(n.orelse, cst.SimpleBlock):
+                # This is an 'else'
+                else_id = self._add_node("ELSE_BLOCK", "else")
+                self._connect_to_active_parent(else_id)
+                
+                self.world_stack.append(self.current_world)
+                self.current_world = else_id
+                self.symbols.push_scope()
+                n.orelse.visit(self)
+                self.symbols.pop_scope()
+                self.current_world = self.world_stack.pop()
+
+            self.active_parent_stack.pop()
+
+        return False # We handled all children
+
+    def visit_Try(self, n):
+        try_id = self._add_node("TRY_BLOCK", "try")
+        self.world_stack.append(self.current_world)
+        self.current_world = try_id
+        self.symbols.push_scope()
+        n.body.visit(self)
+        self.symbols.pop_scope()
+        self.current_world = self.world_stack.pop()
+        
+        for i, handler in enumerate(n.handlers):
+            self.active_parent_stack.append({"type": "NEXT_CLAUSE", "node_id": try_id, "index": i})
+            handler.visit(self)
+            self.active_parent_stack.pop()
+            
+        return False # Handled children
+
+    def visit_ExceptHandler(self, n):
+        label = "except"
+        if n.type: label += f" {cst.Module(n.type).code_for_node(n.type)}"
+        if n.name: label += f" as {n.name.value}"
+        
+        except_id = self._add_node("EXCEPT_BLOCK", label)
+        self._connect_to_active_parent(except_id)
+        
+        if n.type:
+            self.active_parent_stack.append({"type": "INPUT", "node_id": except_id})
+            n.type.visit(self)
+            self.active_parent_stack.pop()
+
+        self.world_stack.append(self.current_world)
+        self.current_world = except_id
+        self.symbols.push_scope()
+        
+        if n.name:
+            pid = self._add_node("VARIABLE", n.name.value, {"mode": "param"}, world=self.current_world)
+            self.symbols.define_write(n.name.value, pid, self.current_world)
+            
+        n.body.visit(self)
+        self.symbols.pop_scope()
+        self.current_world = self.world_stack.pop()
+        return False
+
     # --- DATA FLOW ---
     def visit_Assign(self, n):
         if len(n.targets) == 1 and isinstance(n.targets[0].target, cst.Name):
@@ -144,11 +301,26 @@ class WorldVisitor(cst.CSTVisitor):
     def leave_Return(self, n): self.active_parent_stack.pop()
 
     def visit_Call(self, n):
-        fname = n.func.value if isinstance(n.func, cst.Name) else "unknown"
-        if isinstance(n.func, cst.Attribute): fname = f"{n.func.value.value}.{n.func.attr.value}"
-        if isinstance(n.func, cst.Name): self.ignore_next_name = True
+        fname = "unknown"
+        if isinstance(n.func, cst.Name):
+            fname = n.func.value
+            self.ignore_next_name = True
+        elif isinstance(n.func, cst.Attribute):
+            # This will create an ATTRIBUTE node, just get the full code
+            fname = cst.Module(n.func).code_for_node(n.func)
+        
         nid = self._add_node("CALL", fname)
         self._connect_to_active_parent(nid)
+        
+        # If it's an attribute, parse the object it's being called on
+        if isinstance(n.func, cst.Attribute):
+             self.active_parent_stack.append({"type": "ATTRIBUTE_VALUE", "node_id": nid})
+             n.func.value.visit(self)
+             self.active_parent_stack.pop()
+             # Update node label to just the method name
+             self.graph['nodes'][-1]['label'] = n.func.attr.value
+             self.graph['nodes'][-1]['data']['is_method'] = True
+        
         self.call_stack.append(nid)
         self.current_arg_index = 0
     def leave_Call(self, n): 
@@ -190,7 +362,80 @@ class WorldVisitor(cst.CSTVisitor):
     def visit_Float(self, n): self._atomic(n.value, "LITERAL")
     def visit_SimpleString(self, n): self._atomic(n.value, "LITERAL")
     
-    # --- MAJORLY UPDATED ---
+    # --- DATA STRUCTURES (FIXED) ---
+    
+    def visit_List(self, n):
+        nid = self._add_node("LIST_CONSTRUCTOR", "[]")
+        self._connect_to_active_parent(nid)
+        
+        # Manually visit each element with the correct index
+        for i, el in enumerate(n.elements):
+            self.active_parent_stack.append({"type": "LIST_ELEMENT", "node_id": nid, "index": i})
+            el.value.visit(self) # Visit the cst.ListElement's value
+            self.active_parent_stack.pop()
+            
+        return False # We handled all children
+    
+    def leave_List(self, n):
+        pass # No-op, stack was handled inside visit_List
+
+    def visit_ListElement(self, n):
+        # This should never be called now
+        return False
+
+    def visit_Dict(self, n):
+        nid = self._add_node("DICT_CONSTRUCTOR", "{}")
+        self._connect_to_active_parent(nid)
+        
+        for i, el in enumerate(n.elements):
+            if isinstance(el, cst.DictElement):
+                # Push for KEY
+                self.active_parent_stack.append({"type": "DICT_KEY", "node_id": nid, "index": i})
+                el.key.visit(self)
+                self.active_parent_stack.pop()
+                
+                # Push for VALUE
+                self.active_parent_stack.append({"type": "DICT_VALUE", "node_id": nid, "index": i})
+                el.value.visit(self)
+                self.active_parent_stack.pop()
+        
+        return False # We handled all children
+
+    def leave_Dict(self, n):
+        pass # No-op
+
+    def visit_DictElement(self, n):
+        # This should never be called now
+        return False
+
+    def visit_Subscript(self, n):
+        nid = self._add_node("ACCESSOR", "[]")
+        self._connect_to_active_parent(nid)
+        
+        # Push for the value (e.g., 'my_list')
+        self.active_parent_stack.append({"type": "ACCESS_VALUE", "node_id": nid})
+        n.value.visit(self)
+        self.active_parent_stack.pop()
+        
+        # Push for the key (e.g., '0')
+        self.active_parent_stack.append({"type": "ACCESS_KEY", "node_id": nid})
+        for slice_node in n.slice:
+             slice_node.slice.visit(self) # Visit the cst.Index's value
+        self.active_parent_stack.pop()
+        
+        return False # We visited children
+        
+    def visit_Attribute(self, n):
+        nid = self._add_node("ATTRIBUTE", n.attr.value)
+        self._connect_to_active_parent(nid)
+        
+        # Push for the value (e.g., 'self')
+        self.active_parent_stack.append({"type": "ATTRIBUTE_VALUE", "node_id": nid})
+        n.value.visit(self)
+        self.active_parent_stack.pop()
+        return False # We visited children
+
+    # --- VARIABLE READS (UPDATED) ---
     def visit_Name(self, n):
         if self.ignore_next_name: self.ignore_next_name = False; return
         if not self.in_lvalue and self.active_parent_stack:
@@ -223,19 +468,7 @@ class WorldVisitor(cst.CSTVisitor):
                      source_id_to_link = world_proxies[original_var_id]
              # --- END PROXY LOGIC ---
 
-             # Now, link from the correct source (original OR proxy) to the parent
-             parent = self.active_parent_stack[-1]
-             etype = "INPUT"
-             edge_data = None
-             if parent["type"] == "ARGUMENT": 
-                 etype = "ARGUMENT"
-                 edge_data = {"index": parent.get("index"), "keyword": parent.get("keyword")}
-             elif parent["type"] == "OPERAND": 
-                 etype = "OPERAND"
-                 edge_data = {"index": parent.get("index")}
-             elif parent["type"] == "ASSIGNMENT": etype = "WRITES_TO"
-             
-             self._add_edge(source_id_to_link, parent["node_id"], etype, data=edge_data)
+             self._connect_to_active_parent(source_id_to_link)
 
     def link_calls(self):
         world_parents = {"root": None}
@@ -246,7 +479,7 @@ class WorldVisitor(cst.CSTVisitor):
                   all_defs[node['id']] = node
                   
         for node in self.graph['nodes']:
-            if node['type'] == 'CALL':
+            if node['type'] == 'CALL' and not node['data'].get('is_method'):
                 call_name = node['label']
                 curr = node['world']
                 target_def_id = None

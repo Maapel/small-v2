@@ -32,9 +32,10 @@ class MasterDebugger(cmd.Cmd):
 
     def _update_prompt(self):
         w_label = "root"
-        if self.current_world != "root":
+        if self.current_world != "root" and self.current_world != "world_imports":
              wn = self._get_node(self.current_world)
              if wn: w_label = wn['label']
+             elif self.current_world == "world_imports": w_label = "imports"
         n_label = f" [{self._get_node(self.current_node_id)['label']}]" if self.current_node_id else ""
         self.prompt = f"({w_label}{n_label}) > "
 
@@ -45,6 +46,9 @@ class MasterDebugger(cmd.Cmd):
         try:
             with open(target, 'r') as f: self.graph = json.load(f)
             print(f"✅ Loaded {len(self.graph['nodes'])} nodes from {os.path.basename(target)}")
+            self.current_world = "root"
+            self.world_stack = []
+            self.current_node_id = None
             self._update_prompt()
         except: print(f"❌ Load failed for {target}")
 
@@ -91,12 +95,16 @@ class MasterDebugger(cmd.Cmd):
         except: print("Usage: unlink <number>")
 
     def do_inject(self, arg):
-        filepath = arg.strip()
+        parts = arg.strip().split(maxsplit=1)
+        filepath = parts[0]
+        target_world = parts[1] if len(parts) > 1 else self.current_world
+        
         if not os.path.exists(filepath): print(f"❌ File {filepath} not found."); return
         with open(filepath, 'r') as f: snippet = f.read()
+        
         # Use the imported graph_parser to inject
-        success, msg = graph_parser.inject_code(self.graph, snippet, self.current_world)
-        print(f"✨ Injected {msg} nodes." if success else f"❌ Failed: {msg}")
+        success, msg = graph_parser.inject_code(self.graph, snippet, target_world)
+        print(f"✨ Injected {msg} nodes into {target_world}." if success else f"❌ Failed: {msg}")
         if success: self.do_ls("")
 
     # --- NAVIGATION ---
@@ -104,13 +112,24 @@ class MasterDebugger(cmd.Cmd):
         print(f"\n🌎 WORLD: {self.current_world}\n" + "-"*50)
         for n in self.graph['nodes']:
             if n['world'] == self.current_world:
-                pre = "📦" if n['type'] in ['FUNCTION_DEF','CLASS_DEF'] else "  "
+                pre = "  "
+                if n['type'] in ['FUNCTION_DEF','CLASS_DEF']: pre = "📦"
+                elif n['type'] in ['IF_BLOCK', 'FOR_BLOCK', 'WHILE_BLOCK', 'TRY_BLOCK', 'EXCEPT_BLOCK']: pre = "🌀"
+                elif n['type'] == 'IMPORT': pre = "📥"
+                
                 ptr = "->" if n['id'] == self.current_node_id else "  "
                 print(f"{ptr} {pre} {n['id'].ljust(35)} | [{n['type']}] {n['label']}")
         print("-" * 50)
 
     def do_enter(self, arg):
-        t = next((n for n in self.graph['nodes'] if arg in n['id'] and n['world'] == self.current_world and n['type'] in ['FUNCTION_DEF','CLASS_DEF']), None)
+        # Updated to include control flow blocks
+        ENTERABLE_TYPES = [
+            'FUNCTION_DEF', 'CLASS_DEF', 
+            'IF_BLOCK', 'ELIF_BLOCK', 'ELSE_BLOCK',
+            'FOR_BLOCK', 'WHILE_BLOCK', 
+            'TRY_BLOCK', 'EXCEPT_BLOCK'
+        ]
+        t = next((n for n in self.graph['nodes'] if arg in n['id'] and n['world'] == self.current_world and n['type'] in ENTERABLE_TYPES), None)
         if t: self.world_stack.append(self.current_world); self.current_world = t['id']; self.current_node_id = None; self._update_prompt(); self.do_ls("")
         else: print("❌ Cannot enter.")
 
@@ -122,6 +141,32 @@ class MasterDebugger(cmd.Cmd):
         t = next((n for n in self.graph['nodes'] if arg in n['id'] and n['world'] == self.current_world), None)
         if t: self.current_node_id = t['id']; self._update_prompt(); print(f"📍 Selected {t['label']}")
         else: print("❌ Not found.")
+
+    def do_worlds(self, arg):
+        """(NEW) List all available worlds."""
+        worlds = set(n['world'] for n in self.graph['nodes'])
+        print("🌎 Available Worlds:")
+        for w in sorted(list(worlds)):
+            ptr = "->" if w == self.current_world else "  "
+            label = w
+            if w != 'root' and w != 'world_imports':
+                n = self._get_node(w)
+                label = f"{n['label']} ({w[:8]}...)"
+            print(f"{ptr} {label}")
+            
+    def do_goto(self, arg):
+        """(NEW) Jump to a specific world by name or ID."""
+        target = arg.strip()
+        worlds = set(n['world'] for n in self.graph['nodes'])
+        
+        if target in worlds:
+            self.world_stack.append(self.current_world)
+            self.current_world = target
+            self.current_node_id = None
+            self._update_prompt()
+            self.do_ls("")
+        else:
+            print(f"❌ World '{target}' not found. Use 'worlds' to list.")
 
     def do_neighbors(self, arg):
         if not self.current_node_id: print("❌ No node selected."); return
