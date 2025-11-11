@@ -1,0 +1,100 @@
+import React from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import useStore, { type RFState } from './store';
+import { Box, Braces, ChevronLeft, ChevronRight, X } from 'lucide-react';
+
+const selector = (state: RFState) => ({
+  rawGraph: state.rawGraph,
+  currentWorld: state.currentWorld,
+  enterWorld: state.enterWorld,
+  isOpen: state.isSidebarOpen,
+  toggle: state.toggleSidebar
+});
+
+export default function Sidebar() {
+  const { rawGraph, currentWorld, enterWorld, isOpen, toggle } = useStore(useShallow(selector));
+
+  const definitions = rawGraph.nodes.filter(
+    (n) => n.world === currentWorld && ['FUNCTION_DEF', 'CLASS_DEF'].includes(n.type)
+  );
+
+  return (
+    // 1. This is the flex-item container that animates its width
+    <div 
+        className={`
+            relative h-full transition-all duration-300 ease-in-out
+            flex-shrink-0
+            ${isOpen ? 'w-72' : 'w-0'}
+        `}
+    >
+      {/* 2. This is the button, positioned relative to the container above */}
+      {/* It's -left-6 to hang off the edge. When parent is w-0, it's at -left-6 */}
+      
+      <button
+        onClick={toggle}
+        className={`
+            absolute top-1/2 -translate-y-1/2 -translate-x-4/4 z-50
+            w-6 h-16 bg-sky-500 hover:bg-sky-700 border border-slate-700
+            rounded-l-md flex items-center justify-center text-slate-300
+            transition-all hover:shadow-lg
+        `}
+        title={isOpen ? "Collapse Panel" : "Expand Panel"}
+      >
+        {/* Icon changes based on state */}
+        {isOpen ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+      </button>
+      
+      {/* 3. This is the panel content, which is a fixed width */}
+      {/* It gets *clipped* by its parent (the w-0 div) when closed */}
+      <div className="w-72 h-full bg-slate-900 border-l border-slate-800 flex flex-col overflow-hidden">
+        {/* --- Header --- */}
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between shrink-0">
+          <button onClick={toggle} className="p-1 rounded hover:bg-slate-800 text-slate-500 hover:text-slate-300 transition-colors">
+              <X size={18} />
+          </button>
+          
+          <h2 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+              Definitions
+              <Box size={16} className="text-blue-400" />
+          </h2>
+        </div>
+        
+        {/* --- List --- */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-1 min-h-0">
+          {definitions.length === 0 ? (
+              <div className="p-4 text-slate-600 text-sm font-mono italic text-center">
+                  No local definitions
+              </div>
+          ) : definitions.map((node) => {
+            const isFunc = node.type === 'FUNCTION_DEF';
+            const Icon = isFunc ? Box : Braces;
+            const color = isFunc ? 'text-blue-400' : 'text-purple-400';
+
+            return (
+              <button
+                key={node.id}
+                onClick={() => enterWorld(node.id)}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-800/50 border border-transparent hover:border-slate-700 transition-all group text-left"
+              >
+                <ChevronLeft size={14} className="text-slate-600 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all shrink-0" />
+                <div className="flex-1 min-w-0 text-right">
+                    <div className="text-slate-200 text-sm font-medium truncate">
+                        {node.label}
+                    </div>
+                    {node.data.params && (
+                        <div className="text-slate-500 text-[10px] truncate font-mono mt-0.5">
+                            ({node.data.params.join(', ')})
+                        </div>
+                    )}
+                </div>
+                <div className={`p-1.5 rounded-md bg-slate-950 ${color} shrink-0`}>
+                    <Icon size={16} />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
