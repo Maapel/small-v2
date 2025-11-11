@@ -5,10 +5,8 @@ import useStore, { type RFState } from './store';
 import { nodeTypes } from './Nodes';
 import Sidebar from './Sidebar';
 import '@xyflow/react/dist/style.css';
-// Menu icon is no longer needed here
-import { ArrowLeft, FileJson } from 'lucide-react'; 
+import { ArrowLeft, FileJson, Menu } from 'lucide-react';
 
-// Selector no longer needs to pull toggleSidebar
 const selector = (state: RFState) => ({
   nodes: state.nodes,
   edges: state.edges,
@@ -22,32 +20,47 @@ const selector = (state: RFState) => ({
   currentWorld: state.currentWorld,
   worldStack: state.worldStack,
   rawGraph: state.rawGraph,
-  isSidebarOpen: state.isSidebarOpen, // Still needed for panel animation
+  isSidebarOpen: state.isSidebarOpen,
+  toggleSidebar: state.toggleSidebar,
 });
+
+// --- NEW: Helper function to build breadcrumb paths ---
+const buildBreadcrumbPath = (graph: RFState['rawGraph'], worldStack: string[], currentWorld: string) => {
+    const path = [...worldStack, currentWorld];
+    return path.map(worldId => {
+        if (worldId === 'root') return { id: 'root', label: 'root' };
+        const node = graph.nodes.find(n => n.id === worldId);
+        return { id: worldId, label: node?.label || '...' };
+    });
+};
+// --- END NEW ---
 
 export default function Flow() {
   const { 
     nodes, edges, onNodesChange, onEdgesChange, onConnect, 
     loadGraph, enterWorld, goUp, goToWorld, 
     currentWorld, worldStack, rawGraph,
-    isSidebarOpen // We no longer get toggleSidebar here
+    isSidebarOpen, toggleSidebar
   } = useStore(useShallow(selector));
 
   const [isFileLoaded, setIsFileLoaded] = useState(false);
 
-  // LISTEN FOR ZOOM EVENTS FROM NODES
+  // --- UPDATED: Listen for BOTH world-changing events ---
   useEffect(() => {
-    const handler = (e: CustomEvent<string>) => {
-        if (e.detail) {
-            enterWorld(e.detail);
-        }
+    const handleEnter = (e: any) => enterWorld(e.detail);
+    const handleGoTo = (e: any) => goToWorld(e.detail); // <--- This now works
+    
+    window.addEventListener('enter-world', handleEnter);
+    window.addEventListener('go-to-world', handleGoTo); // <-- NEW LISTENER
+    
+    return () => {
+        window.removeEventListener('enter-world', handleEnter);
+        window.removeEventListener('go-to-world', handleGoTo); // <-- NEW CLEANUP
     };
-    // Cast to any for the event listener type compatibility if needed by strict TS
-    window.addEventListener('enter-world', handler as EventListener);
-    return () => window.removeEventListener('enter-world', handler as EventListener);
-  }, [enterWorld]);
+  }, [enterWorld, goToWorld]); // Add goToWorld to dependency array
 
   const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
+      // This is now a fallback, as CALL nodes use the button
       if (node.type === 'FUNCTION_DEF' || node.type === 'CLASS_DEF') {
           enterWorld(node.id);
       }
@@ -57,18 +70,12 @@ export default function Flow() {
       e.preventDefault(); e.stopPropagation(); 
       const file = e.dataTransfer.files[0];
       if (file) {
-          console.log("📂 File dropped:", file.name); 
           const reader = new FileReader();
           reader.onload = (ev) => {
               try { 
-                  const json = JSON.parse(ev.target?.result as string);
-                  console.log("✅ JSON parsed successfully, loading graph..."); 
-                  loadGraph(json);
+                  loadGraph(JSON.parse(ev.target?.result as string));
                   setIsFileLoaded(true);
-              } catch (err) { 
-                  console.error("❌ JSON Parse Error:", err); 
-                  alert("Invalid graph JSON"); 
-              } 
+              } catch (err) { alert("Invalid graph JSON"); }
           };
           reader.readAsText(file);
       }
@@ -76,12 +83,8 @@ export default function Flow() {
 
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); }, []);
 
-  const getWorldLabel = (id: string) => {
-      if (id === 'root') return 'root';
-      const node = rawGraph.nodes.find(n => n.id === id);
-      return node ? node.label : id.substring(0, 8);
-  };
-  
+  // --- REMOVED getWorldLabel, replaced by buildBreadcrumbPath ---
+
   // --- CENTERED DROPZONE LOGIC ---
   if (!isFileLoaded) {
     return (
@@ -99,7 +102,7 @@ export default function Flow() {
   // --- MAIN APP (FILE LOADED) ---
   return (
     <div 
-        className="fixed inset-0 w-screen h-screen bg-slate-950 flex overflow-hidden" // Added overflow-hidden
+        className="fixed inset-0 w-screen h-screen bg-slate-950 flex overflow-hidden" 
         style={{ width: '100%', height: '100%' }} 
         onDrop={onDrop} 
         onDragOver={onDragOver}
@@ -139,15 +142,15 @@ export default function Flow() {
                     ${isSidebarOpen && isFileLoaded ? 'mr-72' : ''} 
                 `}
             >
-                {/* Breadcrumbs */}
+                {/* UPDATED: Breadcrumbs now show full path */}
                 <div className="flex items-center gap-1 text-sm font-mono mr-2">
-                    {[...worldStack, currentWorld].map((worldId, i, arr) => (
-                        <React.Fragment key={worldId}>
+                    {buildBreadcrumbPath(rawGraph, worldStack, currentWorld).map((world, i, arr) => (
+                        <React.Fragment key={world.id}>
                             <span 
-                                onClick={() => goToWorld(worldId)}
+                                onClick={() => goToWorld(world.id)}
                                 className={`cursor-pointer px-2 py-1 rounded hover:bg-slate-800 ${i === arr.length - 1 ? 'text-blue-400 font-bold' : 'text-slate-500'}`}
                             >
-                                {getWorldLabel(worldId)}
+                                {world.label}
                             </span>
                             {i < arr.length - 1 && <span className="text-slate-700">/</span>}
                         </React.Fragment>
@@ -163,8 +166,16 @@ export default function Flow() {
                     <ArrowLeft size={20} />
                 </button>
                 
-                {/* REMOVED THE DIVIDER AND MENU BUTTON */}
+                <div className="h-6 w-px bg-slate-800" />
                 
+                {/* Sidebar Toggle Button */}
+                <button 
+                    onClick={toggleSidebar} 
+                    className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${!isSidebarOpen ? 'text-blue-400' : ''}`}
+                    title="Toggle Definitions"
+                >
+                    <Menu size={20} />
+                </button>
             </Panel>
             
         </ReactFlow>
