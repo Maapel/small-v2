@@ -123,6 +123,7 @@ export type RFState = {
   setLayoutedWorld: (worldId: string, newStack: string[]) => void; // Added helper
   // --- NEW: ACTIONS ---
   injectCode: (code: string) => Promise<void>;
+  runProject: () => Promise<void>;
 };
 
 const getRawNode = (graph: GraphData, nodeId: string) => graph.nodes.find(n => n.id === nodeId);
@@ -439,6 +440,31 @@ const useStore = create<RFState>((set, get) => ({
       } catch (error: any) {
           get().addOutputLog(`❌ Injection error: ${error.message}`);
           console.error(error);
+      }
+  },
+
+  runProject: async () => {
+      const { rawGraph, addOutputLog, toggleOutput } = get();
+      try {
+          addOutputLog("🚀 Compiling and running...");
+          
+          // If output panel is closed, open it
+          if (!get().isOutputOpen) toggleOutput();
+
+          const result = await api.runGraph(rawGraph);
+          
+          if (result.success) {
+              // Split output by lines and add to logs
+              const lines = result.output.split('\n');
+              lines.forEach((line: string) => {
+                  if (line) addOutputLog(line);
+              });
+              addOutputLog("✅ Execution finished.");
+          } else {
+              addOutputLog(`❌ Execution failed: ${result.output}`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ System Error: ${error.message}`);
       }
   },
 }));

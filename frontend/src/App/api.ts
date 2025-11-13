@@ -14,5 +14,19 @@ export const api = {
         }
         
         return response.json();
+    },
+
+    runGraph: async (graph: any) => {
+        const response = await fetch(`${API_URL}/run`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ graph }),
+        });
+        
+        if (!response.ok) {
+            throw new Error('Execution failed');
+        }
+        
+        return response.json();
     }
 };

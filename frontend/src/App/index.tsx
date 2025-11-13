@@ -6,7 +6,7 @@ import { nodeTypes } from './Nodes';
 import Sidebar from './Sidebar';
 import OutputPanel from './OutputPanel'; // --- NEW IMPORT ---
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, FileJson, Menu, FileText, Terminal } from 'lucide-react'; // Added Terminal
+import { ArrowLeft, FileJson, Menu, FileText, Terminal, Play } from 'lucide-react'; // Added Terminal, Play
 import InjectModal from './InjectModal';
 
 const selector = (state: RFState) => ({
@@ -27,6 +27,7 @@ const selector = (state: RFState) => ({
   toggleOutput: state.toggleOutput, // --- NEW ---
   isOutputOpen: state.isOutputOpen, // --- NEW ---
   injectCode: state.injectCode,
+  runProject: state.runProject,
 });
 
 // --- Helper function to build breadcrumb paths ---
@@ -54,7 +55,8 @@ export default function Flow() {
     currentWorld, worldStack, rawGraph,
     isSidebarOpen, toggleSidebar,
     toggleOutput, isOutputOpen,
-    injectCode
+    injectCode,
+    runProject
   } = useStore(useShallow(selector));
 
   // --- NEW STATE ---
@@ -213,6 +215,16 @@ export default function Flow() {
                         <Terminal size={20} />
                     </button>
                     
+                    <div className="h-6 w-px bg-slate-800" />
+
+                    <button 
+                        onClick={runProject}
+                        className="p-2 rounded-lg hover:bg-slate-800 text-green-400 hover:text-green-300 transition-colors"
+                        title="Run Project"
+                    >
+                        <Play size={20} />
+                    </button>
+
                     <div className="h-6 w-px bg-slate-800" />
                     
                     <button 
