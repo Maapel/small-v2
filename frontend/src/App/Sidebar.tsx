@@ -1,4 +1,4 @@
-import { Box, Braces, ChevronLeft, ChevronRight, X, FileText, Plus } from 'lucide-react'; // Add Plus
+import { Box, Braces, ChevronLeft, ChevronRight, X, FileText, Plus, Trash2 } from 'lucide-react'; // Add Plus, Trash2
 import React, { useState } from 'react'; // Import useState
 import { useShallow } from 'zustand/react/shallow';
 import useStore, { type RFState } from './store';
@@ -10,13 +10,14 @@ const selector = (state: RFState) => ({
   isOpen: state.isSidebarOpen,
   toggle: state.toggleSidebar,
   addImport: state.addImport, // <-- NEW
+  removeNodes: state.removeNodes, // <-- NEW
 });
 
 // --- Selector for imports ---
 const importSelector = (state: RFState) => state.rawGraph.nodes.filter(n => n.type === 'IMPORT');
 
 export default function Sidebar() {
-  const { rawGraph, currentWorld, enterWorld, isOpen, toggle, addImport } = useStore(useShallow(selector));
+  const { rawGraph, currentWorld, enterWorld, isOpen, toggle, addImport, removeNodes } = useStore(useShallow(selector));
   
   // --- FIX: Wrap the selector in useShallow ---
   // This prevents re-renders if the array contents are the same
@@ -131,12 +132,28 @@ export default function Sidebar() {
                         No imports
                     </div>
                 ) : importNodes.map((node) => (
-                    <div 
-                        key={node.id} 
-                        className="flex items-center gap-3 px-3 py-2 text-slate-400 font-mono text-xs"
+                    <div
+                        key={node.id}
+                        className="group flex items-center justify-between px-3 py-2 text-slate-400 font-mono text-xs hover:bg-slate-800/50 transition-colors rounded"
                     >
-                        <FileText size={14} className="shrink-0" />
-                        <span className="truncate" title={node.label}>{node.label}</span>
+                        <div className="flex items-center gap-3 min-w-0">
+                            <FileText size={14} className="shrink-0" />
+                            <span className="truncate" title={node.label}>{node.label}</span>
+                        </div>
+
+                        {/* Delete Button - Visible on Hover */}
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if(confirm(`Remove ${node.label}?`)) {
+                                    removeNodes([node.id]);
+                                }
+                            }}
+                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition-all"
+                            title="Remove Import"
+                        >
+                            <Trash2 size={12} />
+                        </button>
                     </div>
                 ))}
             </div>

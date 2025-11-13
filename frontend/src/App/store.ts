@@ -95,12 +95,12 @@ type EngineEdge = {
 type GraphData = { nodes: EngineNode[]; edges: EngineEdge[] };
 
 export type RFState = {
-  nodes: AppNode[]; 
+  nodes: AppNode[];
   edges: Edge[];
   rawGraph: GraphData;
   currentWorld: string;
   worldStack: string[];
-  
+
   // Sidebar State
   isSidebarOpen: boolean;
   toggleSidebar: () => void;
@@ -112,11 +112,17 @@ export type RFState = {
   addOutputLog: (log: string) => void;
   clearOutput: () => void;
 
+  // Undo/Redo State
+  canUndo: boolean;
+  canRedo: boolean;
+  history: GraphData[];
+  historyIndex: number;
+
   // Actions
   onNodesChange: OnNodesChange;
   onEdgesChange: OnEdgesChange;
   onConnect: OnConnect;
-  loadGraph: (data: GraphData) => void;
+  loadGraph: (data: GraphData, applyLayout?: boolean) => void;
   enterWorld: (nodeId: string) => void;
   goUp: () => void;
   goToWorld: (worldId: string) => void;
@@ -127,6 +133,10 @@ export type RFState = {
   removeNodes: (nodeIds: string[]) => Promise<void>;
   addImport: (code: string) => Promise<void>;
   updateNodeLiteral: (nodeId: string, newValue: string) => Promise<void>;
+  undo: () => void;
+  redo: () => void;
+  saveToHistory: () => void;
+  restoreFromHistory: (index: number) => void;
 };
 
 const getRawNode = (graph: GraphData, nodeId: string) => graph.nodes.find(n => n.id === nodeId);
@@ -369,24 +379,67 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: AppNode[], edg
 
 const useStore = create<RFState>((set, get) => ({
   nodes: [], edges: [], rawGraph: { nodes: [], edges: [] },
-  currentWorld: 'root', worldStack: [], 
+  currentWorld: 'root', worldStack: [],
   isSidebarOpen: true,
-  isOutputOpen: true, 
-  outputLogs: ["System ready."], 
+  isOutputOpen: true,
+  outputLogs: ["System ready."],
+  canUndo: false,
+  canRedo: false,
+
+  // History tracking
+  history: [] as GraphData[],
+  historyIndex: -1,
+
+  // Helper function to save current state to history
+  saveToHistory: () => {
+    const { rawGraph, history, historyIndex } = get();
+    console.log('🔍 saveToHistory called. Current history length:', history.length, 'historyIndex:', historyIndex);
+    // Remove any future history if we're not at the end
+    const newHistory = history.slice(0, historyIndex + 1);
+    // Add current state
+    newHistory.push(JSON.parse(JSON.stringify(rawGraph))); // Deep copy
+    // Limit history to 50 entries
+    if (newHistory.length > 50) {
+      newHistory.shift();
+    } else {
+      set({ historyIndex: newHistory.length - 1 });
+    }
+    const newCanUndo = newHistory.length > 1;
+    console.log('🔍 saveToHistory: new history length:', newHistory.length, 'new historyIndex:', newHistory.length - 1, 'canUndo:', newCanUndo);
+    set({
+      history: newHistory,
+      canUndo: newCanUndo,
+      canRedo: false
+    });
+  },
+
+  // Helper function to restore state from history
+  restoreFromHistory: (index: number) => {
+    const { history, loadGraph } = get();
+    if (index >= 0 && index < history.length) {
+      const restoredGraph = history[index];
+      loadGraph(restoredGraph, false); // Don't apply layout on undo/redo
+      set({
+        historyIndex: index,
+        canUndo: index > 0,
+        canRedo: index < history.length - 1
+      });
+    }
+  },
 
   onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) as AppNode[] }),
   onEdgesChange: (changes) => set({ edges: applyEdgeChanges(changes, get().edges) }),
   onConnect: (connection) => set({ edges: addEdge(connection, get().edges) }),
-  
-  loadGraph: (data) => {
+
+  loadGraph: (data, applyLayout = true) => {
       const { nodes, edges } = filterWorld(data, 'root');
-      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges, 'TB');
-      set({ 
-          rawGraph: data, 
-          currentWorld: 'root', 
-          worldStack: [], 
-          nodes: layoutedNodes, 
-          edges: layoutedEdges, 
+      const layoutedElements = applyLayout ? getLayoutedElements(nodes, edges, 'TB') : { nodes, edges };
+      set({
+          rawGraph: data,
+          currentWorld: 'root',
+          worldStack: [],
+          nodes: layoutedElements.nodes,
+          edges: layoutedElements.edges,
           isSidebarOpen: true,
           outputLogs: [...get().outputLogs, `Loaded ${data.nodes.length} nodes.`]
       });
@@ -416,27 +469,28 @@ const useStore = create<RFState>((set, get) => ({
 
   goToWorld: (worldId) => {
       const { rawGraph, currentWorld } = get();
-      if (currentWorld === worldId) return; 
+      if (currentWorld === worldId) return;
       const { stack } = buildWorldPath(rawGraph, worldId);
-      const newWorldId = stack.pop()!; 
-      const newStack = stack; 
+      const newWorldId = stack.pop()!;
+      const newStack = stack;
       get().setLayoutedWorld(newWorldId, newStack);
   },
-  
+
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
   toggleOutput: () => set((state) => ({ isOutputOpen: !state.isOutputOpen })),
   addOutputLog: (log) => set((state) => ({ outputLogs: [...state.outputLogs, log] })),
   clearOutput: () => set({ outputLogs: [] }),
 
   injectCode: async (code: string) => {
-      const { rawGraph, currentWorld, loadGraph } = get();
+      const { rawGraph, currentWorld, loadGraph, saveToHistory } = get();
       try {
           // Send current graph and code to backend
           const result = await api.injectCode(rawGraph, code, currentWorld);
-          
+
           // Reload the graph with the updated data from server
           if (result.success && result.graph) {
               loadGraph(result.graph);
+              saveToHistory(); // Save to history after successful change
               // Optionally log to output panel
               get().addOutputLog(`✨ Injected code into ${currentWorld}`);
           }
@@ -450,12 +504,12 @@ const useStore = create<RFState>((set, get) => ({
       const { rawGraph, addOutputLog, toggleOutput } = get();
       try {
           addOutputLog("🚀 Compiling and running...");
-          
+
           // If output panel is closed, open it
           if (!get().isOutputOpen) toggleOutput();
 
           const result = await api.runGraph(rawGraph);
-          
+
           if (result.success) {
               // Split output by lines and add to logs
               const lines = result.output.split('\n');
@@ -474,30 +528,49 @@ const useStore = create<RFState>((set, get) => ({
   // --- NEW ACTION IMPLEMENTATIONS ---
 
   removeNodes: async (nodeIds: string[]) => {
-      const { rawGraph, loadGraph, addOutputLog } = get();
+      console.log('🔍 removeNodes called with nodeIds:', nodeIds);
+      const { rawGraph, loadGraph, addOutputLog, saveToHistory } = get();
+
+      // Save current state BEFORE the action
+      console.log('🔍 removeNodes: saving state before action');
+      saveToHistory();
+
       try {
           const result = await api.removeNodes(rawGraph, nodeIds);
+          console.log('🔍 removeNodes API result:', result);
           if (result.success) {
+              console.log('🔍 removeNodes: calling loadGraph with result.graph');
               loadGraph(result.graph); // Reload the graph
+              console.log('🔍 removeNodes: saving state after action');
+              saveToHistory(); // Save to history after successful change
               addOutputLog(`🗑️ Removed ${nodeIds.length} node(s)`);
+              console.log('🔍 removeNodes: completed successfully');
+          } else {
+              console.log('🔍 removeNodes: API call failed');
           }
       } catch (error: any) {
+          console.log('🔍 removeNodes: exception caught:', error);
           addOutputLog(`❌ Error removing nodes: ${error.message}`);
       }
   },
 
   addImport: async (code: string) => {
-      const { rawGraph, loadGraph, addOutputLog } = get();
+      const { rawGraph, loadGraph, addOutputLog, saveToHistory } = get();
+
+      // Save current state BEFORE the action
+      saveToHistory();
+
       try {
           const result = await api.addImport(rawGraph, code);
           if (result.success) {
               loadGraph(result.graph);
+              saveToHistory(); // Save to history after successful change
               addOutputLog(`📥 Added import: ${code}`);
           }
       } catch (error: any) {
           addOutputLog(`❌ Error adding import: ${error.message}`);
-      }
-  },
+          }
+      },
 
   updateNodeLiteral: async (nodeId: string, newValue: string) => {
       const { rawGraph, loadGraph, addOutputLog } = get();
@@ -506,20 +579,20 @@ const useStore = create<RFState>((set, get) => ({
           // We need to find the *source* literal node.
           const { edges } = get();
           const edge = edges.find(e => e.target === nodeId); // Simplified: finds first
-          
+
           if (!edge) {
              // This is likely an "in-port literal" on a CALL node etc.
              // This logic needs to be much smarter, finding the *implied* literal.
              // For now, we'll log a placeholder.
              console.warn("updateNodeLiteral needs complex logic to find/create the literal node");
              addOutputLog(`(DUMMY) ✏️ Updated literal for ${nodeId}`);
-             return; 
+             return;
           }
-          
+
           // If a literal is wired, update *that* node
           const sourceNodeId = edge.source;
           const result = await api.updateNodeLiteral(rawGraph, sourceNodeId, newValue);
-          
+
           if (result.success) {
               loadGraph(result.graph);
               addOutputLog(`✏️ Updated literal ${sourceNodeId} to ${newValue}`);
@@ -527,6 +600,25 @@ const useStore = create<RFState>((set, get) => ({
       } catch (error: any) {
           addOutputLog(`❌ Error updating literal: ${error.message}`);
       }
+  },
+
+  undo: () => {
+    console.log('🔍 undo called');
+    const { historyIndex, history } = get();
+    console.log('🔍 undo: current historyIndex:', historyIndex, 'history length:', history.length);
+    if (historyIndex > 0) {
+      console.log('🔍 undo: calling restoreFromHistory with index:', historyIndex - 1);
+      get().restoreFromHistory(historyIndex - 1);
+    } else {
+      console.log('🔍 undo: cannot undo - at beginning of history');
+    }
+  },
+
+  redo: () => {
+    const { history, historyIndex } = get();
+    if (historyIndex < history.length - 1) {
+      get().restoreFromHistory(historyIndex + 1);
+    }
   },
 
 }));

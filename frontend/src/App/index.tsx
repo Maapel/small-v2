@@ -1,12 +1,12 @@
 import React, { useCallback, useState, useEffect } from 'react';
-import { ReactFlow, Controls, Background, MiniMap, Panel, type Node, useReactFlow, type NodeDeleteChange } from '@xyflow/react';
+import { ReactFlow, Controls, Background, MiniMap, Panel, type Node, useReactFlow } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
 import useStore, { type RFState } from './store';
 import { nodeTypes } from './Nodes';
 import Sidebar from './Sidebar';
 import OutputPanel from './OutputPanel'; // --- NEW IMPORT ---
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, FileJson, Menu, FileText, Terminal, Play } from 'lucide-react'; // Added Terminal, Play
+import { ArrowLeft, FileJson, Menu, FileText, Terminal, Play, Undo, Redo } from 'lucide-react'; // Added Terminal, Play, Undo, Redo
 import InjectModal from './InjectModal';
 
 const selector = (state: RFState) => ({
@@ -29,6 +29,10 @@ const selector = (state: RFState) => ({
   injectCode: state.injectCode,
   runProject: state.runProject,
   removeNodes: state.removeNodes,
+  canUndo: state.canUndo,
+  canRedo: state.canRedo,
+  undo: state.undo,
+  redo: state.redo,
 });
 
 // --- Helper function to build breadcrumb paths ---
@@ -50,15 +54,19 @@ const ZOOMABLE_NODE_TYPES = [
 ];
 
 export default function Flow() {
-  const { 
-    nodes, edges, onNodesChange, onEdgesChange, onConnect, 
-    loadGraph, enterWorld, goUp, goToWorld, 
+  const {
+    nodes, edges, onNodesChange, onEdgesChange, onConnect,
+    loadGraph, enterWorld, goUp, goToWorld,
     currentWorld, worldStack, rawGraph,
     isSidebarOpen, toggleSidebar,
     toggleOutput, isOutputOpen,
     injectCode,
     runProject,
-    removeNodes 
+    removeNodes,
+    canUndo,
+    canRedo,
+    undo,
+    redo
   } = useStore(useShallow(selector));
   const { getNodes } = useReactFlow();
 
@@ -118,8 +126,9 @@ export default function Flow() {
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); }, []);
 
   // --- NEW HANDLER for Deletion ---
-  const onNodesDelete = useCallback((changes: NodeDeleteChange[]) => {
+  const onNodesDelete = useCallback((changes: any[]) => {
       const nodeIds = changes.map(c => c.id);
+      console.log('🔍 onNodesDelete called with nodeIds:', nodeIds);
       removeNodes(nodeIds);
   }, [removeNodes]);
 
@@ -228,7 +237,27 @@ export default function Flow() {
                     
                     <div className="h-6 w-px bg-slate-800" />
 
-                    <button 
+                    <button
+                        onClick={undo}
+                        disabled={!canUndo}
+                        className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
+                        title="Undo"
+                    >
+                        <Undo size={20} />
+                    </button>
+
+                    <button
+                        onClick={redo}
+                        disabled={!canRedo}
+                        className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
+                        title="Redo"
+                    >
+                        <Redo size={20} />
+                    </button>
+
+                    <div className="h-6 w-px bg-slate-800" />
+
+                    <button
                         onClick={runProject}
                         className="p-2 rounded-lg hover:bg-slate-800 text-green-400 hover:text-green-300 transition-colors"
                         title="Run Project"
@@ -237,9 +266,9 @@ export default function Flow() {
                     </button>
 
                     <div className="h-6 w-px bg-slate-800" />
-                    
-                    <button 
-                        onClick={toggleSidebar} 
+
+                    <button
+                        onClick={toggleSidebar}
                         className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${!isSidebarOpen ? 'text-blue-400' : ''}`}
                         title="Toggle Definitions"
                     >

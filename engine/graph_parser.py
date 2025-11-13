@@ -537,26 +537,16 @@ def remove_nodes(graph: dict, node_ids: list[str]) -> dict:
     """
     Removes a list of nodes and their connected edges from the graph.
     """
-    print(f"DEBUG: remove_nodes called with node_ids: {node_ids}")
-    print(f"DEBUG: Initial graph has {len(graph.get('nodes', []))} nodes and {len(graph.get('edges', []))} edges.")
-
     node_id_set = set(node_ids)
     
     # Filter nodes
-    initial_node_count = len(graph.get('nodes', []))
     graph['nodes'] = [n for n in graph['nodes'] if n['id'] not in node_id_set]
-    final_node_count = len(graph['nodes'])
-    print(f"DEBUG: Nodes filtered. Before: {initial_node_count}, After: {final_node_count}")
-
+    
     # Filter edges
-    initial_edge_count = len(graph.get('edges', []))
     graph['edges'] = [
         e for e in graph['edges'] 
         if e['source'] not in node_id_set and e['target'] not in node_id_set
     ]
-    final_edge_count = len(graph['edges'])
-    print(f"DEBUG: Edges filtered. Before: {initial_edge_count}, After: {final_edge_count}")
-    
     return graph
 
 # --- NEW HELPER: Update Literal ---
