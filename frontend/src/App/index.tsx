@@ -29,8 +29,6 @@ const selector = (state: RFState) => ({
   injectCode: state.injectCode,
   runProject: state.runProject,
   removeNodes: state.removeNodes,
-  canUndo: state.canUndo,
-  canRedo: state.canRedo,
   undo: state.undo,
   redo: state.redo,
 });
@@ -63,8 +61,6 @@ export default function Flow() {
     injectCode,
     runProject,
     removeNodes,
-    canUndo,
-    canRedo,
     undo,
     redo
   } = useStore(useShallow(selector));
@@ -128,7 +124,6 @@ export default function Flow() {
   // --- NEW HANDLER for Deletion ---
   const onNodesDelete = useCallback((changes: any[]) => {
       const nodeIds = changes.map(c => c.id);
-      console.log('🔍 onNodesDelete called with nodeIds:', nodeIds);
       removeNodes(nodeIds);
   }, [removeNodes]);
 
@@ -239,18 +234,18 @@ export default function Flow() {
 
                     <button
                         onClick={undo}
-                        disabled={!canUndo}
+                        disabled={true}
                         className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
-                        title="Undo"
+                        title="Undo (TODO: Implement later)"
                     >
                         <Undo size={20} />
                     </button>
 
                     <button
                         onClick={redo}
-                        disabled={!canRedo}
+                        disabled={true}
                         className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
-                        title="Redo"
+                        title="Redo (TODO: Implement later)"
                     >
                         <Redo size={20} />
                     </button>

@@ -386,46 +386,15 @@ const useStore = create<RFState>((set, get) => ({
   canUndo: false,
   canRedo: false,
 
-  // History tracking
+  // History tracking - TODO: Implement later
   history: [] as GraphData[],
   historyIndex: -1,
 
-  // Helper function to save current state to history
-  saveToHistory: () => {
-    const { rawGraph, history, historyIndex } = get();
-    console.log('🔍 saveToHistory called. Current history length:', history.length, 'historyIndex:', historyIndex);
-    // Remove any future history if we're not at the end
-    const newHistory = history.slice(0, historyIndex + 1);
-    // Add current state
-    newHistory.push(JSON.parse(JSON.stringify(rawGraph))); // Deep copy
-    // Limit history to 50 entries
-    if (newHistory.length > 50) {
-      newHistory.shift();
-    } else {
-      set({ historyIndex: newHistory.length - 1 });
-    }
-    const newCanUndo = newHistory.length > 1;
-    console.log('🔍 saveToHistory: new history length:', newHistory.length, 'new historyIndex:', newHistory.length - 1, 'canUndo:', newCanUndo);
-    set({
-      history: newHistory,
-      canUndo: newCanUndo,
-      canRedo: false
-    });
-  },
+  // Helper function to save current state to history - TODO: Implement later
+  saveToHistory: () => {},
 
-  // Helper function to restore state from history
-  restoreFromHistory: (index: number) => {
-    const { history, loadGraph } = get();
-    if (index >= 0 && index < history.length) {
-      const restoredGraph = history[index];
-      loadGraph(restoredGraph, false); // Don't apply layout on undo/redo
-      set({
-        historyIndex: index,
-        canUndo: index > 0,
-        canRedo: index < history.length - 1
-      });
-    }
-  },
+  // Helper function to restore state from history - TODO: Implement later
+  restoreFromHistory: (index: number) => {},
 
   onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) as AppNode[] }),
   onEdgesChange: (changes) => set({ edges: applyEdgeChanges(changes, get().edges) }),
@@ -482,7 +451,7 @@ const useStore = create<RFState>((set, get) => ({
   clearOutput: () => set({ outputLogs: [] }),
 
   injectCode: async (code: string) => {
-      const { rawGraph, currentWorld, loadGraph, saveToHistory } = get();
+      const { rawGraph, currentWorld, loadGraph } = get();
       try {
           // Send current graph and code to backend
           const result = await api.injectCode(rawGraph, code, currentWorld);
@@ -490,7 +459,6 @@ const useStore = create<RFState>((set, get) => ({
           // Reload the graph with the updated data from server
           if (result.success && result.graph) {
               loadGraph(result.graph);
-              saveToHistory(); // Save to history after successful change
               // Optionally log to output panel
               get().addOutputLog(`✨ Injected code into ${currentWorld}`);
           }
@@ -528,49 +496,30 @@ const useStore = create<RFState>((set, get) => ({
   // --- NEW ACTION IMPLEMENTATIONS ---
 
   removeNodes: async (nodeIds: string[]) => {
-      console.log('🔍 removeNodes called with nodeIds:', nodeIds);
-      const { rawGraph, loadGraph, addOutputLog, saveToHistory } = get();
-
-      // Save current state BEFORE the action
-      console.log('🔍 removeNodes: saving state before action');
-      saveToHistory();
-
+      const { rawGraph, loadGraph, addOutputLog } = get();
       try {
           const result = await api.removeNodes(rawGraph, nodeIds);
-          console.log('🔍 removeNodes API result:', result);
           if (result.success) {
-              console.log('🔍 removeNodes: calling loadGraph with result.graph');
               loadGraph(result.graph); // Reload the graph
-              console.log('🔍 removeNodes: saving state after action');
-              saveToHistory(); // Save to history after successful change
               addOutputLog(`🗑️ Removed ${nodeIds.length} node(s)`);
-              console.log('🔍 removeNodes: completed successfully');
-          } else {
-              console.log('🔍 removeNodes: API call failed');
           }
       } catch (error: any) {
-          console.log('🔍 removeNodes: exception caught:', error);
           addOutputLog(`❌ Error removing nodes: ${error.message}`);
       }
   },
 
   addImport: async (code: string) => {
-      const { rawGraph, loadGraph, addOutputLog, saveToHistory } = get();
-
-      // Save current state BEFORE the action
-      saveToHistory();
-
+      const { rawGraph, loadGraph, addOutputLog } = get();
       try {
           const result = await api.addImport(rawGraph, code);
           if (result.success) {
               loadGraph(result.graph);
-              saveToHistory(); // Save to history after successful change
               addOutputLog(`📥 Added import: ${code}`);
           }
       } catch (error: any) {
           addOutputLog(`❌ Error adding import: ${error.message}`);
-          }
-      },
+      }
+  },
 
   updateNodeLiteral: async (nodeId: string, newValue: string) => {
       const { rawGraph, loadGraph, addOutputLog } = get();
@@ -603,22 +552,13 @@ const useStore = create<RFState>((set, get) => ({
   },
 
   undo: () => {
-    console.log('🔍 undo called');
-    const { historyIndex, history } = get();
-    console.log('🔍 undo: current historyIndex:', historyIndex, 'history length:', history.length);
-    if (historyIndex > 0) {
-      console.log('🔍 undo: calling restoreFromHistory with index:', historyIndex - 1);
-      get().restoreFromHistory(historyIndex - 1);
-    } else {
-      console.log('🔍 undo: cannot undo - at beginning of history');
-    }
+    // TODO: Implement Undo functionality later
+    console.log('Undo clicked - TODO: Implement later');
   },
 
   redo: () => {
-    const { history, historyIndex } = get();
-    if (historyIndex < history.length - 1) {
-      get().restoreFromHistory(historyIndex + 1);
-    }
+    // TODO: Implement Redo functionality later
+    console.log('Redo clicked - TODO: Implement later');
   },
 
 }));
