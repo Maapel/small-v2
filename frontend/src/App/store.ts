@@ -7,10 +7,72 @@ import {
   applyNodeChanges,
   applyEdgeChanges,
   addEdge,
+  Position, // --- 1. Imported Position ---
 } from '@xyflow/react';
 import { create } from 'zustand';
+import dagre from 'dagre'; // --- 2. Imported Dagre ---
 
-// ... (Types are unchanged)
+// --- 3. Custom Types for Type Safety ---
+type CustomNodeData = {
+    label: string;
+    type: string;
+    exportedToWorlds?: { worldId: string; label: string; fullPath: string }[];
+    initialItems?: {isWired: boolean, value: string, portId: string}[];
+    initialPairs?: {
+        key: {isWired: boolean, value: string, portId: string},
+        value: {isWired: boolean, value: string, portId: string}
+    }[];
+    port_defaults?: { [key: string]: string };
+    [key: string]: any; 
+};
+
+// Define our specific Node type
+type AppNode = Node<CustomNodeData>;
+
+// --- 4. Dagre Layout Helper ---
+const dagreGraph = new dagre.graphlib.Graph();
+dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+const NODE_WIDTH = 250;
+const NODE_HEIGHT = 150; 
+
+const getLayoutedElements = (nodes: AppNode[], edges: Edge[], direction = 'TB') => {
+  const isHorizontal = direction === 'LR';
+  dagreGraph.setGraph({ rankdir: direction, nodesep: 100, ranksep: 100 });
+
+  nodes.forEach((node) => {
+    // Adjust height dynamically for list/dict nodes so layout doesn't overlap
+    let height = NODE_HEIGHT;
+    if (node.type === 'LIST_CONSTRUCTOR' && node.data.initialItems) {
+      height = 60 + node.data.initialItems.length * 32 + 30; 
+    } else if (node.type === 'DICT_CONSTRUCTOR' && node.data.initialPairs) {
+      height = 60 + node.data.initialPairs.length * 32 + 30;
+    }
+    dagreGraph.setNode(node.id, { width: NODE_WIDTH, height: height });
+  });
+
+  edges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target);
+  });
+
+  dagre.layout(dagreGraph);
+
+  nodes.forEach((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id);
+    node.targetPosition = isHorizontal ? Position.Left : Position.Top;
+    node.sourcePosition = isHorizontal ? Position.Right : Position.Bottom;
+
+    // Shift position because Dagre anchors center, ReactFlow anchors top-left
+    node.position = {
+      x: nodeWithPosition.x - NODE_WIDTH / 2,
+      y: nodeWithPosition.y - (dagreGraph.node(node.id).height) / 2,
+    };
+  });
+
+  return { nodes, edges };
+};
+
+// --- Engine Types (Unchanged) ---
 type EngineParam = { name: string; optional: boolean };
 type EngineNode = { 
     id: string; 
@@ -35,7 +97,7 @@ type EngineEdge = {
 type GraphData = { nodes: EngineNode[]; edges: EngineEdge[] };
 
 export type RFState = {
-  nodes: Node[];
+  nodes: AppNode[]; // Updated to AppNode
   edges: Edge[];
   rawGraph: GraphData;
   currentWorld: string;
@@ -49,11 +111,12 @@ export type RFState = {
   goUp: () => void;
   goToWorld: (worldId: string) => void;
   toggleSidebar: () => void;
+  setLayoutedWorld: (worldId: string, newStack: string[]) => void; // Added this
 };
 
 const getRawNode = (graph: GraphData, nodeId: string) => graph.nodes.find(n => n.id === nodeId);
 
-// ... (buildWorldPath is unchanged)
+// --- World Path Utility ---
 const buildWorldPath = (graph: GraphData, worldId: string): { path: string, stack: string[] } => {
     let currentId = worldId;
     const stack: string[] = [];
@@ -78,8 +141,8 @@ const buildWorldPath = (graph: GraphData, worldId: string): { path: string, stac
     return { path, stack: pathStack };
 };
 
-
-const filterWorld = (graph: GraphData, worldId: string): { nodes: Node[], edges: Edge[] } => {
+// --- Filter World ---
+const filterWorld = (graph: GraphData, worldId: string): { nodes: AppNode[], edges: Edge[] } => {
     const worldNodes = graph.nodes.filter(n => 
         n.world === worldId && 
         n.type !== 'FUNCTION_DEF' && 
@@ -90,51 +153,53 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: Node[], edges:
     const worldNodeMap = new Map(worldNodes.map(n => [n.id, n]));
     const allEdges = graph.edges;
     
-    // --- UPDATED: Clutter Reduction & Data Structure Pre-processing ---
-    
     const collapsedNodeIds = new Set<string>();
     const collapsedEdgeIds = new Set<string>();
     
-    const processedNodeData = new Map<string, any>();
+    const processedNodeData = new Map<string, CustomNodeData>();
+    
+    // Initialize processed data with defaults
     worldNodes.forEach(node => {
-        processedNodeData.set(node.id, { ...node.data, port_defaults: {} });
+        processedNodeData.set(node.id, { 
+            ...node.data, 
+            label: node.label, 
+            type: node.type,
+            port_defaults: {} 
+        });
     });
 
     for (const targetNode of worldNodes) {
         const targetNodeData = processedNodeData.get(targetNode.id)!;
         
-        // --- RENAMED: Pre-process LIST_CONSTRUCTOR ---
         if (targetNode.type === 'LIST_CONSTRUCTOR') {
             const itemEdges = allEdges
                 .filter(e => e.target === targetNode.id && e.type === 'LIST_ELEMENT')
                 .sort((a, b) => (a.data?.index ?? 0) - (b.data?.index ?? 0));
                 
-            // We now pass *all* items to the node, literal or wired
             const initialItems: any[] = []; 
             for (const edge of itemEdges) {
                 const sourceNode = getRawNode(graph, edge.source);
+                const portId = `item_${edge.data?.index ?? 0}`;
+                
                 if (sourceNode && sourceNode.type === 'LITERAL') {
-                    // This is a literal, collapse it
                     initialItems.push({ 
                         isWired: false, 
                         value: sourceNode.label, 
-                        portId: `item_${edge.data?.index ?? 0}` 
+                        portId 
                     });
                     collapsedNodeIds.add(sourceNode.id);
                     collapsedEdgeIds.add(`${edge.source}-${edge.target}-${edge.type}`);
                 } else {
-                    // This is a wired input, the node will render a port
                     initialItems.push({ 
                         isWired: true, 
                         value: `[Wired Input]`, 
-                        portId: `item_${edge.data?.index ?? 0}` 
+                        portId 
                     });
                 }
             }
             targetNodeData.initialItems = initialItems;
         }
         
-        // --- RENAMED: Pre-process DICT_CONSTRUCTOR ---
         else if (targetNode.type === 'DICT_CONSTRUCTOR') {
             const keyEdges = allEdges.filter(e => e.target === targetNode.id && e.type === 'DICT_KEY');
             const valueEdges = allEdges.filter(e => e.target === targetNode.id && e.type === 'DICT_VALUE');
@@ -175,7 +240,6 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: Node[], edges:
             }));
         }
         
-        // --- "In-Port Literal" logic for all OTHER nodes ---
         else {
             const incomingEdges = allEdges.filter(e => e.target === targetNode.id);
             for (const edge of incomingEdges) {
@@ -203,28 +267,27 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: Node[], edges:
                     if (portName) {
                         collapsedNodeIds.add(sourceNode.id);
                         collapsedEdgeIds.add(`${edge.source}-${edge.target}-${edge.type}`); 
-                        targetNodeData.port_defaults[portName] = sourceNode.label;
+                        if (targetNodeData.port_defaults) {
+                            targetNodeData.port_defaults[portName] = sourceNode.label;
+                        }
                     }
                 }
             }
         }
     }
-    // --- END Clutter Reduction ---
 
     const finalWorldNodes = worldNodes.filter(n => !collapsedNodeIds.has(n.id));
-    
     const nodeIds = new Set(finalWorldNodes.map(n => n.id));
     
     const worldEdges = allEdges.filter(e => 
-        (nodeIds.has(e.source) && nodeIds.has(e.target)) && // Both nodes must be visible
+        (nodeIds.has(e.source) && nodeIds.has(e.target)) && 
         e.type !== 'CLOSURE_OF' &&
         !collapsedEdgeIds.has(`${e.source}-${e.target}-${e.type}`)
     );
 
-    const COLUMNS = 4; const X_SP = 300; const Y_SP = 200;
     return {
-        nodes: finalWorldNodes.map((n, i) => {
-            const nodeData = processedNodeData.get(n.id) || n.data;
+        nodes: finalWorldNodes.map((n, i): AppNode => {
+            const nodeData = processedNodeData.get(n.id)!;
             
             let exportedToWorlds: { worldId: string; label: string; fullPath: string }[] = [];
             if (n.type === 'VARIABLE') {
@@ -240,21 +303,23 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: Node[], edges:
                     })
                     .filter((item): item is { worldId: string; label: string; fullPath: string } => item !== null);
             }
+            nodeData.exportedToWorlds = exportedToWorlds;
 
             return {
                 id: n.id, 
                 type: n.type,
-                data: { ...nodeData, label: n.label, type: n.type, exportedToWorlds },
-                position: { x: (i % COLUMNS) * X_SP + 50, y: Math.floor(i / COLUMNS) * Y_SP + 100 }
+                data: nodeData,
+                position: { x: 0, y: 0 } // Placeholder; Dagre will update this
             };
         }),
         
         edges: worldEdges.map((e, i) => {
             let targetHandle: string | null = null;
-            let label: string | undefined = undefined; // --- NEW: For edge labels ---
+            let label: string | undefined = undefined;
             const targetNode = getRawNode(graph, e.target);
             if (!targetNode) return { id: `e_${i}`, source: e.source, target: e.target }; 
             
+            // Use processed data if available, else fallback to raw
             const targetNodeData = processedNodeData.get(e.target) || targetNode.data;
 
             if (e.type === 'ARGUMENT') {
@@ -267,13 +332,13 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: Node[], edges:
                 }
             } else if (e.type === 'LIST_ELEMENT') {
                 targetHandle = `item_${e.data?.index ?? 0}`;
-                label = `${e.data?.index ?? 0}`; // --- ADDED EDGE LABEL ---
+                label = `${e.data?.index ?? 0}`;
             } else if (e.type === 'DICT_KEY') {
                 targetHandle = `key_${e.data?.index ?? 0}`;
-                label = `K${e.data?.index ?? 0}`; // --- ADDED EDGE LABEL ---
+                label = `K${e.data?.index ?? 0}`;
             } else if (e.type === 'DICT_VALUE') {
                 targetHandle = `value_${e.data?.index ?? 0}`;
-                label = `V${e.data?.index ?? 0}`; // --- ADDED EDGE LABEL ---
+                label = `V${e.data?.index ?? 0}`;
             } else if (e.type === 'OPERAND') {
                 targetHandle = `operand_${e.data?.index ?? 0}`;
             } else if (e.type === 'WRITES_TO') {
@@ -295,7 +360,7 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: Node[], edges:
                 source: e.source, 
                 target: e.target, 
                 targetHandle: targetHandle,
-                label: label, // --- Pass the label to React Flow ---
+                label: label,
                 animated: ['WRITES_TO', 'INPUT'].includes(e.type),
                 style: { stroke: e.type === 'ARGUMENT' ? '#f59e0b' : '#64748b', strokeWidth: 2 }
             };
@@ -303,42 +368,60 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: Node[], edges:
     };
 };
 
-// --- Store definition (unchanged) ---
+// --- Store Implementation ---
 const useStore = create<RFState>((set, get) => ({
   nodes: [], edges: [], rawGraph: { nodes: [], edges: [] },
   currentWorld: 'root', worldStack: [], 
   isSidebarOpen: true,
-  onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) }),
+  onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) as AppNode[] }), // Cast result
   onEdgesChange: (changes) => set({ edges: applyEdgeChanges(changes, get().edges) }),
   onConnect: (connection) => set({ edges: addEdge(connection, get().edges) }),
+  
   loadGraph: (data) => {
       const { nodes, edges } = filterWorld(data, 'root');
-      set({ rawGraph: data, currentWorld: 'root', worldStack: [], nodes, edges, isSidebarOpen: true });
+      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges, 'TB');
+      set({ 
+          rawGraph: data, 
+          currentWorld: 'root', 
+          worldStack: [], 
+          nodes: layoutedNodes, 
+          edges: layoutedEdges, 
+          isSidebarOpen: true 
+      });
   },
+
+  // --- Layout-aware World Switcher ---
+  setLayoutedWorld: (worldId: string, newStack: string[]) => {
+      const { rawGraph } = get();
+      const { nodes, edges } = filterWorld(rawGraph, worldId);
+      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges, 'TB');
+      set({ worldStack: newStack, currentWorld: worldId, nodes: layoutedNodes, edges: layoutedEdges });
+  },
+
   enterWorld: (nodeId) => {
-      const { rawGraph, currentWorld, worldStack } = get();
+      const { currentWorld, worldStack } = get();
       if (currentWorld === nodeId) return;
       const newStack = [...worldStack, currentWorld];
-      const { nodes, edges } = filterWorld(rawGraph, nodeId);
-      set({ worldStack: newStack, currentWorld: nodeId, nodes, edges });
+      get().setLayoutedWorld(nodeId, newStack);
   },
+
   goUp: () => {
-      const { rawGraph, worldStack } = get();
+      const { worldStack } = get();
       if (worldStack.length === 0) return;
       const newStack = [...worldStack];
       const prevWorld = newStack.pop()!;
-      const { nodes, edges } = filterWorld(rawGraph, prevWorld);
-      set({ worldStack: newStack, currentWorld: prevWorld, nodes, edges });
+      get().setLayoutedWorld(prevWorld, newStack);
   },
+
   goToWorld: (worldId) => {
       const { rawGraph, currentWorld } = get();
       if (currentWorld === worldId) return; 
       const { stack } = buildWorldPath(rawGraph, worldId);
       const newWorldId = stack.pop()!; 
       const newStack = stack; 
-      const { nodes, edges } = filterWorld(rawGraph, newWorldId);
-      set({ worldStack: newStack, currentWorld: newWorldId, nodes, edges });
+      get().setLayoutedWorld(newWorldId, newStack);
   },
+  
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
 }));
 
