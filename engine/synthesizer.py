@@ -202,11 +202,19 @@ class Synthesizer:
                     
         return lines
 
+    # --- UPDATED: generate_code ---
     def generate_code(self):
+        # Process imports first, then the root
         processed_ids = set()
-        lines = self._write_world("world_imports", 0, processed_ids)
-        lines.extend(self._write_world("root", 0, processed_ids))
-        return "\n".join(lines)
+        
+        # 1. Synthesize imports
+        import_lines = self._write_world("world_imports", 0, processed_ids)
+        
+        # 2. Synthesize main code
+        root_lines = self._write_world("root", 0, processed_ids)
+        
+        # 3. Combine them
+        return "\n".join(import_lines) + "\n\n" + "\n".join(root_lines)
 
     
     def run(self):

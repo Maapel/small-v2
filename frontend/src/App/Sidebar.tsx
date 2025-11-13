@@ -1,26 +1,42 @@
-import React from 'react';
+import { Box, Braces, ChevronLeft, ChevronRight, X, FileText, Plus } from 'lucide-react'; // Add Plus
+import React, { useState } from 'react'; // Import useState
 import { useShallow } from 'zustand/react/shallow';
 import useStore, { type RFState } from './store';
-import { Box, Braces, ChevronLeft, ChevronRight, X, FileText } from 'lucide-react';
 
 const selector = (state: RFState) => ({
   rawGraph: state.rawGraph,
   currentWorld: state.currentWorld,
   enterWorld: state.enterWorld,
   isOpen: state.isSidebarOpen,
-  toggle: state.toggleSidebar
+  toggle: state.toggleSidebar,
+  addImport: state.addImport, // <-- NEW
 });
 
 // --- Selector for imports ---
 const importSelector = (state: RFState) => state.rawGraph.nodes.filter(n => n.type === 'IMPORT');
 
 export default function Sidebar() {
-  const { rawGraph, currentWorld, enterWorld, isOpen, toggle } = useStore(useShallow(selector));
+  const { rawGraph, currentWorld, enterWorld, isOpen, toggle, addImport } = useStore(useShallow(selector));
   
   // --- FIX: Wrap the selector in useShallow ---
   // This prevents re-renders if the array contents are the same
-  const importNodes = useStore(useShallow(importSelector));
-  // --- END FIX ---
+  const importNodes = useStore(useShallow(importSelector)); 
+  
+  // --- NEW STATE for import input ---
+  const [importCode, setImportCode] = useState('');
+
+  const handleAddImport = () => {
+      if (importCode.trim()) {
+          addImport(importCode.trim());
+          setImportCode(''); // Clear input
+      }
+  };
+
+  const handleImportKeydown = (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+          handleAddImport();
+      }
+  };
 
   const definitions = rawGraph.nodes.filter(
     (n) => n.world === currentWorld && ['FUNCTION_DEF', 'CLASS_DEF'].includes(n.type)
@@ -123,6 +139,24 @@ export default function Sidebar() {
                         <span className="truncate" title={node.label}>{node.label}</span>
                     </div>
                 ))}
+            </div>
+            {/* --- NEW: Add Import Input --- */}
+            <div className="p-2 border-t border-slate-800 flex gap-2">
+                <input
+                    type="text"
+                    placeholder="import os"
+                    className="flex-1 bg-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-300 outline-none border border-slate-700 focus:border-blue-500"
+                    value={importCode}
+                    onChange={(e) => setImportCode(e.target.value)}
+                    onKeyDown={handleImportKeydown}
+                />
+                <button 
+                    onClick={handleAddImport}
+                    className="p-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded"
+                    title="Add Import"
+                >
+                    <Plus size={16} />
+                </button>
             </div>
         </div>
         {/* --- END NEW --- */}

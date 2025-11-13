@@ -124,6 +124,9 @@ export type RFState = {
   // --- NEW: ACTIONS ---
   injectCode: (code: string) => Promise<void>;
   runProject: () => Promise<void>;
+  removeNodes: (nodeIds: string[]) => Promise<void>;
+  addImport: (code: string) => Promise<void>;
+  updateNodeLiteral: (nodeId: string, newValue: string) => Promise<void>;
 };
 
 const getRawNode = (graph: GraphData, nodeId: string) => graph.nodes.find(n => n.id === nodeId);
@@ -467,6 +470,65 @@ const useStore = create<RFState>((set, get) => ({
           addOutputLog(`❌ System Error: ${error.message}`);
       }
   },
+
+  // --- NEW ACTION IMPLEMENTATIONS ---
+
+  removeNodes: async (nodeIds: string[]) => {
+      const { rawGraph, loadGraph, addOutputLog } = get();
+      try {
+          const result = await api.removeNodes(rawGraph, nodeIds);
+          if (result.success) {
+              loadGraph(result.graph); // Reload the graph
+              addOutputLog(`🗑️ Removed ${nodeIds.length} node(s)`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ Error removing nodes: ${error.message}`);
+      }
+  },
+
+  addImport: async (code: string) => {
+      const { rawGraph, loadGraph, addOutputLog } = get();
+      try {
+          const result = await api.addImport(rawGraph, code);
+          if (result.success) {
+              loadGraph(result.graph);
+              addOutputLog(`📥 Added import: ${code}`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ Error adding import: ${error.message}`);
+      }
+  },
+
+  updateNodeLiteral: async (nodeId: string, newValue: string) => {
+      const { rawGraph, loadGraph, addOutputLog } = get();
+      try {
+          // Note: This API only works if the source is a LITERAL.
+          // We need to find the *source* literal node.
+          const { edges } = get();
+          const edge = edges.find(e => e.target === nodeId); // Simplified: finds first
+          
+          if (!edge) {
+             // This is likely an "in-port literal" on a CALL node etc.
+             // This logic needs to be much smarter, finding the *implied* literal.
+             // For now, we'll log a placeholder.
+             console.warn("updateNodeLiteral needs complex logic to find/create the literal node");
+             addOutputLog(`(DUMMY) ✏️ Updated literal for ${nodeId}`);
+             return; 
+          }
+          
+          // If a literal is wired, update *that* node
+          const sourceNodeId = edge.source;
+          const result = await api.updateNodeLiteral(rawGraph, sourceNodeId, newValue);
+          
+          if (result.success) {
+              loadGraph(result.graph);
+              addOutputLog(`✏️ Updated literal ${sourceNodeId} to ${newValue}`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ Error updating literal: ${error.message}`);
+      }
+  },
+
 }));
 
 export default useStore;

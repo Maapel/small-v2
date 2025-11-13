@@ -8,16 +8,13 @@ import io
 import contextlib
 import json
 import tempfile
-from engine.synthesizer import Synthesizer
-
-# Ensure engine modules can be imported
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from engine import graph_parser
+    from engine.synthesizer import Synthesizer # Ensure Synthesizer is imported
 except ImportError:
-    # Fallback if running from different context
     import graph_parser
+    from synthesizer import Synthesizer
 
 app = FastAPI()
 
@@ -37,6 +34,19 @@ class InjectRequest(BaseModel):
 
 class RunRequest(BaseModel):
     graph: dict
+
+class RemoveNodesRequest(BaseModel):
+    graph: dict
+    nodeIds: list[str]
+
+class AddImportRequest(BaseModel):
+    graph: dict
+    code: str # e.g., "import os"
+
+class UpdateLiteralRequest(BaseModel):
+    graph: dict
+    nodeId: str
+    newValue: str
 
 @app.post("/run")
 def run_code_endpoint(req: RunRequest):
@@ -104,6 +114,38 @@ def inject_code_endpoint(req: InjectRequest):
         "message": f"Successfully injected {msg} nodes.",
         "graph": updated_graph
     }
+
+# --- NEW ENDPOINT: Remove Nodes ---
+@app.post("/op/remove-nodes")
+def remove_nodes_endpoint(req: RemoveNodesRequest):
+    try:
+        updated_graph = graph_parser.remove_nodes(req.graph, req.nodeIds)
+        return {"success": True, "graph": updated_graph}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- NEW ENDPOINT: Add Import ---
+@app.post("/op/add-import")
+def add_import_endpoint(req: AddImportRequest):
+    try:
+        # Use the existing inject_code function, but target 'world_imports'
+        success, _ = graph_parser.inject_code(req.graph, req.code, "world_imports")
+        if not success:
+            raise HTTPException(status_code=400, detail="Invalid import syntax")
+        return {"success": True, "graph": req.graph}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- NEW ENDPOINT: Update Literal ---
+@app.post("/op/update-literal")
+def update_literal_endpoint(req: UpdateLiteralRequest):
+    try:
+        # This is a conceptual hack. In a real system, this would be more complex.
+        # This finds the *literal node* and updates its label.
+        updated_graph = graph_parser.update_node_literal(req.graph, req.nodeId, req.newValue)
+        return {"success": True, "graph": updated_graph}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

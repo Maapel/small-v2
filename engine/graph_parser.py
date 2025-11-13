@@ -532,6 +532,46 @@ def inject_code(existing_graph, code_snippet, target_world="root"):
         return True, len(visitor.graph['nodes'])
     except Exception as e: return False, str(e)
 
+# --- NEW HELPER: Remove Nodes ---
+def remove_nodes(graph: dict, node_ids: list[str]) -> dict:
+    """
+    Removes a list of nodes and their connected edges from the graph.
+    """
+    print(f"DEBUG: remove_nodes called with node_ids: {node_ids}")
+    print(f"DEBUG: Initial graph has {len(graph.get('nodes', []))} nodes and {len(graph.get('edges', []))} edges.")
+
+    node_id_set = set(node_ids)
+    
+    # Filter nodes
+    initial_node_count = len(graph.get('nodes', []))
+    graph['nodes'] = [n for n in graph['nodes'] if n['id'] not in node_id_set]
+    final_node_count = len(graph['nodes'])
+    print(f"DEBUG: Nodes filtered. Before: {initial_node_count}, After: {final_node_count}")
+
+    # Filter edges
+    initial_edge_count = len(graph.get('edges', []))
+    graph['edges'] = [
+        e for e in graph['edges'] 
+        if e['source'] not in node_id_set and e['target'] not in node_id_set
+    ]
+    final_edge_count = len(graph['edges'])
+    print(f"DEBUG: Edges filtered. Before: {initial_edge_count}, After: {final_edge_count}")
+    
+    return graph
+
+# --- NEW HELPER: Update Literal ---
+def update_node_literal(graph: dict, node_id: str, new_label: str) -> dict:
+    """
+    Finds a node and updates its label.
+    This is for simple LITERAL nodes.
+    """
+    for node in graph['nodes']:
+        if node['id'] == node_id:
+            if node['type'] == 'LITERAL':
+                node['label'] = new_label
+                break
+    return graph
+
 if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "playground/target.py"
     if os.path.exists(target):

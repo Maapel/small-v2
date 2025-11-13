@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useEffect } from 'react';
-import { ReactFlow, Controls, Background, MiniMap, Panel, type Node } from '@xyflow/react';
+import { ReactFlow, Controls, Background, MiniMap, Panel, type Node, useReactFlow, type NodeDeleteChange } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
 import useStore, { type RFState } from './store';
 import { nodeTypes } from './Nodes';
@@ -28,6 +28,7 @@ const selector = (state: RFState) => ({
   isOutputOpen: state.isOutputOpen, // --- NEW ---
   injectCode: state.injectCode,
   runProject: state.runProject,
+  removeNodes: state.removeNodes,
 });
 
 // --- Helper function to build breadcrumb paths ---
@@ -56,8 +57,10 @@ export default function Flow() {
     isSidebarOpen, toggleSidebar,
     toggleOutput, isOutputOpen,
     injectCode,
-    runProject
+    runProject,
+    removeNodes 
   } = useStore(useShallow(selector));
+  const { getNodes } = useReactFlow();
 
   // --- NEW STATE ---
   const [modalState, setModalState] = useState({ isOpen: false, x: 0, y: 0 });
@@ -114,6 +117,12 @@ export default function Flow() {
 
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); }, []);
 
+  // --- NEW HANDLER for Deletion ---
+  const onNodesDelete = useCallback((changes: NodeDeleteChange[]) => {
+      const nodeIds = changes.map(c => c.id);
+      removeNodes(nodeIds);
+  }, [removeNodes]);
+
   if (!isFileLoaded) {
     return (
         <div 
@@ -148,6 +157,8 @@ export default function Flow() {
                 nodeTypes={nodeTypes}
                 onNodeDoubleClick={onNodeDoubleClick}
                 onPaneContextMenu={onPaneContextMenu}
+                onNodesDelete={onNodesDelete}
+                deleteKeyCode={['Backspace', 'Delete']}
                 fitView
                 minZoom={0.1}
                 className="bg-slate-950 h-full"
