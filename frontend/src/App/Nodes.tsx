@@ -46,6 +46,14 @@ const Port = memo(({
 }) => {
     
     const [currentValue, setCurrentValue] = useState(hardcodedValue ?? '');
+    const [inputWidth, setInputWidth] = useState(0);
+    const spanRef = React.useRef<HTMLSpanElement>(null);
+
+    React.useEffect(() => {
+        if (spanRef.current) {
+            setInputWidth(spanRef.current.scrollWidth + 2); // Add some padding
+        }
+    }, [currentValue]);
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === 'Enter') e.currentTarget.blur();
@@ -74,23 +82,24 @@ const Port = memo(({
             />
             
             {/* --- UPDATED: Input is always rendered --- */}
-            <input 
+            <span ref={spanRef} className="absolute invisible text-xs font-mono whitespace-pre">{currentValue || label}</span>
+            <input
                 type="text"
                 className={`
-                    absolute left-2.5 w-full max-w-[calc(100%-1rem)] 
-                    bg-slate-700/50 rounded-sm px-1 py-0.5 text-xs font-mono 
-                    outline-none border border-transparent 
-                    ${isConnected 
-                        ? 'text-slate-500 italic' 
+                    absolute left-2.5
+                    bg-slate-700/50 rounded-sm px-1 py-0.5 text-xs font-mono
+                    outline-none border border-transparent
+                    ${isConnected
+                        ? 'text-slate-500 italic'
                         : 'text-cyan-300 focus:border-cyan-500 focus:bg-slate-700'
                     }
                 `}
-                style={{ zIndex: 5 }}
+                style={{ zIndex: 5, width: `${inputWidth+8}px` }}
                 value={isConnected ? '[Wired Input]' : currentValue}
                 onChange={(e) => setCurrentValue(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onBlur={handleBlur}
-                placeholder={label} 
+                placeholder={label}
                 disabled={isConnected} // --- Input is disabled when wired ---
             />
         </div>
@@ -147,7 +156,7 @@ const BlenderNode = memo(({ id: nodeId, data, icon: Icon, color, children, hasOu
             </div>
 
             <div className="flex justify-between">
-                <div className="py-2 space-y-1 min-w-0">
+                <div className="py-2 space-y-1">
                     {requiredParams.map(renderPort)}
                     {isExpanded && optionalParams.map(renderPort)}
                 </div>
@@ -291,7 +300,7 @@ const ContainerNode = (props: NodeProps & { icon: React.ElementType, color: stri
     );
 }
 export const ForBlockNode = (props: NodeProps) => (
-    <ContainerNode {...props} icon={Repeat} color="#e11d48" data={{ ...props.data, params: [{ name: "iterates_on", optional: false, name: "iterates_on" }]}} />
+    <ContainerNode {...props} icon={Repeat} color="#e11d48" data={{ ...props.data, params: [{ name: "iterates_on", optional: false }]}} />
 );
 export const WhileBlockNode = (props: NodeProps) => (
     <ContainerNode {...props} icon={Repeat1} color="#e11d48" data={{ ...props.data, params: [{ name: "value", optional: false }]}} />
