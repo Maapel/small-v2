@@ -98,6 +98,8 @@ type EngineEdge = {
 };
 type GraphData = { nodes: EngineNode[]; edges: EngineEdge[] };
 
+const getRawNode = (graph: GraphData, nodeId: string) => graph.nodes.find(n => n.id === nodeId);
+
 export type RFState = {
   nodes: AppNode[];
   edges: Edge[];
@@ -116,17 +118,22 @@ export type RFState = {
   addOutputLog: (log: string) => void;
   clearOutput: () => void;
 
+  // --- NEW: Code Panel State ---
+  isCodeOpen: boolean;
+  codeContent: string;
+  toggleCode: () => void;
+  fetchNodeCode: (nodeId: string) => Promise<string>;
+
   // Undo/Redo State
   canUndo: boolean;
   canRedo: boolean;
   history: GraphData[];
   historyIndex: number;
 
-  // --- NEW: Code Panel State ---
-  isCodeOpen: boolean;
-  codeContent: string;
-  toggleCode: () => void;
-  fetchNodeCode: (nodeId: string) => Promise<string>;
+  // --- NEW: ACTIONS ---
+  newGraph: () => void;
+  loadGraphFromPy: (code: string) => Promise<void>;
+  saveGraph: (filepath?: string) => Promise<void>;
 
   // Actions
   onNodesChange: OnNodesChange;
@@ -137,7 +144,6 @@ export type RFState = {
   goUp: () => void;
   goToWorld: (worldId: string) => void;
   setLayoutedWorld: (worldId: string, newStack: string[], preservePositions?: boolean) => void; // Added helper
-  // --- NEW: ACTIONS ---
   injectCode: (code: string) => Promise<void>;
   runProject: () => Promise<void>;
   removeNodes: (nodeIds: string[]) => Promise<void>;
@@ -156,8 +162,6 @@ export type RFState = {
   saveToHistory: () => void;
   restoreFromHistory: (index: number) => void;
 };
-
-const getRawNode = (graph: GraphData, nodeId: string) => graph.nodes.find(n => n.id === nodeId);
 
 const buildWorldPath = (graph: GraphData, worldId: string): { path: string, stack: string[] } => {
     let currentId = worldId;
@@ -414,6 +418,9 @@ const useStore = create<RFState>((set, get) => ({
   // --- NEW: Code Panel State ---
   isCodeOpen: false,
   codeContent: '',
+  newGraph: () => {},
+  loadGraphFromPy: async (code: string) => {},
+  saveGraph: async (filepath?: string) => {},
 
   // History tracking - TODO: Implement later
   history: [] as GraphData[],

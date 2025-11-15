@@ -166,186 +166,185 @@ export default function Flow() {
       {/* MAIN LEFT COLUMN (Canvas + Output) */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative">
 
-        {/* CANVAS AREA (Flex-1 to take remaining space) */}
+        {/* CANVAS/CODE AREA (Switch between graph and code) */}
         <div className="flex-1 relative min-h-0">
-            <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                onEdgesDelete={onEdgesDelete}
-                nodeTypes={nodeTypes}
-                onNodeDoubleClick={onNodeDoubleClick}
-                onPaneContextMenu={onPaneContextMenu}
-                onNodesDelete={onNodesDelete}
-                deleteKeyCode={['Backspace', 'Delete']}
-                fitView
-                minZoom={0.1}
-                className={`bg-slate-950 h-full ${isCodeOpen ? 'hidden' : ''}`}
-            >
-                <Background color="#1e293b" gap={16} />
-                <Controls className="!bg-slate-800 !border-slate-700 [&>button]:!fill-slate-400" />
-                <MiniMap
-                    nodeColor={(n) => {
-                        if (n.type === 'FUNCTION_DEF') return '#3b82f6';
-                        if (n.type === 'CLASS_DEF') return '#8b5cf6';
-                        if (n.type && n.type.endsWith('_BLOCK')) return '#f97316';
-                        return '#334155';
-                    }}
-                    maskColor="rgba(15, 23, 42, 0.6)"
-                    className="!bg-slate-900"
-                />
+            {isCodeOpen ? (
+                // --- CODE EDITOR VIEW: Replaces canvas entirely ---
+                <div className="h-full bg-[#1e293b]">
+                    {/* Mini toolbar for code view */}
+                    <div className="flex items-center justify-between p-2 bg-slate-800 border-b border-slate-700">
+                        <div className="flex items-center gap-4">
+                            {/* World breadcrumb */}
+                            <div className="flex items-center gap-1 text-xs font-mono">
+                                {buildBreadcrumbPath(rawGraph, worldStack, currentWorld).map((world, i, arr) => (
+                                    <React.Fragment key={world.id}>
+                                        <span className={i === arr.length - 1 ? 'text-blue-300 font-bold' : 'text-slate-400'}>
+                                            {world.label}
+                                        </span>
+                                        {i < arr.length - 1 && <span className="text-slate-600">/</span>}
+                                    </React.Fragment>
+                                ))}
+                            </div>
+                            <span className="text-slate-400 text-xs">Code Editor</span>
+                        </div>
 
-                {/* FLOATING TOOLBAR */}
-                <Panel
-                    position="top-right"
-                    className={`
-                        flex items-center gap-3 p-2 bg-slate-900/90 backdrop-blur-md rounded-xl border border-slate-800 m-4
-                        transition-all duration-300 ease-in-out
-                        ${isSidebarOpen && isFileLoaded ? 'mr-72' : ''}
-                    `}
-                >
-                    <div className="flex items-center gap-1 text-sm font-mono mr-2">
-                        {buildBreadcrumbPath(rawGraph, worldStack, currentWorld).map((world, i, arr) => (
-                            <React.Fragment key={world.id}>
-                                <span
-                                    onClick={() => goToWorld(world.id)}
-                                    className={`cursor-pointer px-2 py-1 rounded hover:bg-slate-800 ${i === arr.length - 1 ? 'text-blue-400 font-bold' : 'text-slate-500'}`}
-                                >
-                                    {world.label}
-                                </span>
-                                {i < arr.length - 1 && <span className="text-slate-700">/</span>}
-                            </React.Fragment>
-                        ))}
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500 mr-2">Graph:</span>
+                            <button
+                                onClick={toggleCode}
+                                className="flex items-center gap-2 px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs text-slate-300 hover:text-white transition-colors"
+                                title="Switch back to Graph View"
+                            >
+                                <ArrowLeft size={14} />
+                                <span>Graph</span>
+                            </button>
+                        </div>
                     </div>
 
-                    <button
-                        onClick={goUp}
-                        disabled={worldStack.length === 0}
-                        className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
+                    {/* Code Editor Area */}
+                    <pre className="font-mono text-sm text-green-400 whitespace-pre-wrap p-4 h-full overflow-auto leading-relaxed">
+                        {codeContent || "# No code content available"}
+                    </pre>
+                </div>
+            ) : (
+                // --- VISUAL GRAPH VIEW ---
+                <ReactFlow
+                    nodes={nodes}
+                    edges={edges}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onConnect={onConnect}
+                    onEdgesDelete={onEdgesDelete}
+                    nodeTypes={nodeTypes}
+                    onNodeDoubleClick={onNodeDoubleClick}
+                    onPaneContextMenu={onPaneContextMenu}
+                    onNodesDelete={onNodesDelete}
+                    deleteKeyCode={['Backspace', 'Delete']}
+                    fitView
+                    minZoom={0.1}
+                    className="bg-slate-950 h-full"
+                >
+                    <Background color="#1e293b" gap={16} />
+                    <Controls className="!bg-slate-800 !border-slate-700 [&>button]:!fill-slate-400" />
+                    <MiniMap
+                        nodeColor={(n) => {
+                            if (n.type === 'FUNCTION_DEF') return '#3b82f6';
+                            if (n.type === 'CLASS_DEF') return '#8b5cf6';
+                            if (n.type && n.type.endsWith('_BLOCK')) return '#f97316';
+                            return '#334155';
+                        }}
+                        maskColor="rgba(15, 23, 42, 0.6)"
+                        className="!bg-slate-900"
+                    />
+
+                    {/* FLOATING TOOLBAR */}
+                    <Panel
+                        position="top-right"
+                        className={`
+                            flex items-center gap-3 p-2 bg-slate-900/90 backdrop-blur-md rounded-xl border border-slate-800 m-4
+                            transition-all duration-300 ease-in-out
+                            ${isSidebarOpen && isFileLoaded ? 'mr-72' : ''}
+                        `}
                     >
-                        <ArrowLeft size={20} />
-                    </button>
+                        <div className="flex items-center gap-1 text-sm font-mono mr-2">
+                            {buildBreadcrumbPath(rawGraph, worldStack, currentWorld).map((world, i, arr) => (
+                                <React.Fragment key={world.id}>
+                                    <span
+                                        onClick={() => goToWorld(world.id)}
+                                        className={`cursor-pointer px-2 py-1 rounded hover:bg-slate-800 ${i === arr.length - 1 ? 'text-blue-400 font-bold' : 'text-slate-500'}`}
+                                    >
+                                        {world.label}
+                                    </span>
+                                    {i < arr.length - 1 && <span className="text-slate-700">/</span>}
+                                </React.Fragment>
+                            ))}
+                        </div>
 
-                    <div className="h-6 w-px bg-slate-800" />
+                        <button
+                            onClick={goUp}
+                            disabled={worldStack.length === 0}
+                            className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
+                        >
+                            <ArrowLeft size={20} />
+                        </button>
 
-                    <button
-                        onClick={() => goToWorld('world_imports')}
-                        className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${currentWorld === 'world_imports' ? 'text-blue-400' : ''}`}
-                        title="Go to Imports"
-                    >
-                        <FileText size={20} />
-                    </button>
+                        <div className="h-6 w-px bg-slate-800" />
 
-                    {/* --- NEW: Toggle Output Button --- */}
-                    <button
-                        onClick={toggleOutput}
-                        className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${isOutputOpen ? 'text-blue-400' : ''}`}
-                        title="Toggle Output Panel"
-                    >
-                        <Terminal size={20} />
-                    </button>
+                        <button
+                            onClick={() => goToWorld('world_imports')}
+                            className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${currentWorld === 'world_imports' ? 'text-blue-400' : ''}`}
+                            title="Go to Imports"
+                        >
+                            <FileText size={20} />
+                        </button>
 
-                    <div className="h-6 w-px bg-slate-800" />
+                        {/* --- NEW: Toggle Output Button --- */}
+                        <button
+                            onClick={toggleOutput}
+                            className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${isOutputOpen ? 'text-blue-400' : ''}`}
+                            title="Toggle Output Panel"
+                        >
+                            <Terminal size={20} />
+                        </button>
 
-                    <button
-                        onClick={undo}
-                        disabled={true}
-                        className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
-                        title="Undo (TODO: Implement later)"
-                    >
-                        <Undo size={20} />
-                    </button>
+                        <div className="h-6 w-px bg-slate-800" />
 
-                    <button
-                        onClick={redo}
-                        disabled={true}
-                        className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
-                        title="Redo (TODO: Implement later)"
-                    >
-                        <Redo size={20} />
-                    </button>
+                        <button
+                            onClick={undo}
+                            disabled={true}
+                            className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
+                            title="Undo (TODO: Implement later)"
+                        >
+                            <Undo size={20} />
+                        </button>
 
-                    <div className="h-6 w-px bg-slate-800" />
+                        <button
+                            onClick={redo}
+                            disabled={true}
+                            className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
+                            title="Redo (TODO: Implement later)"
+                        >
+                            <Redo size={20} />
+                        </button>
 
-                    <button
-                        onClick={runProject}
-                        className="p-2 rounded-lg hover:bg-slate-800 text-green-400 hover:text-green-300 transition-colors"
-                        title="Run Project"
-                    >
-                        <Play size={20} />
-                    </button>
+                        <div className="h-6 w-px bg-slate-800" />
 
-                    <div className="h-6 w-px bg-slate-800" />
+                        <button
+                            onClick={runProject}
+                            className="p-2 rounded-lg hover:bg-slate-800 text-green-400 hover:text-green-300 transition-colors"
+                            title="Run Project"
+                        >
+                            <Play size={20} />
+                        </button>
 
-                    {/* --- NEW: Toggle Code Panel Button --- */}
-                    <button
-                        onClick={toggleCode}
-                        className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${isCodeOpen ? 'text-blue-400' : ''}`}
-                        title={isCodeOpen ? "Close Code Panel" : "Open Code Panel"}
-                    >
-                        <Code size={20} />
-                    </button>
+                        <div className="h-6 w-px bg-slate-800" />
 
-                    <div className="h-6 w-px bg-slate-800" />
+                        {/* --- NEW: Toggle Code View Button --- */}
+                        <button
+                            onClick={toggleCode}
+                            className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${isCodeOpen ? 'text-slate-400' : ''}`}
+                            title={isCodeOpen ? "Switch to Code View" : "Switch to Graph View"}
+                        >
+                            <Code size={20} />
+                        </button>
 
-                    <button
-                        onClick={toggleSidebar}
-                        className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${!isSidebarOpen ? 'text-blue-400' : ''}`}
-                        title="Toggle Definitions"
-                    >
-                        <Menu size={20} />
-                    </button>
-                </Panel>
+                        <div className="h-6 w-px bg-slate-800" />
 
-            </ReactFlow>
+                        <button
+                            onClick={toggleSidebar}
+                            className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${!isSidebarOpen ? 'text-blue-400' : ''}`}
+                            title="Toggle Definitions"
+                        >
+                            <Menu size={20} />
+                        </button>
+                    </Panel>
+
+                </ReactFlow>
+            )}
         </div>
 
         {/* OUTPUT PANEL (At Bottom of Left Column) */}
         {isFileLoaded && <OutputPanel />}
-
-        {/* CODE PANEL (Top layer when open) */}
-        {isCodeOpen && (
-            <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-sm z-20 flex items-center justify-center p-8">
-                <div className="bg-slate-800 rounded-lg border border-slate-600 w-full max-w-4xl h-5/6 flex flex-col">
-                    {/* Code Panel Header */}
-                    <div className="flex items-center justify-between p-4 border-b border-slate-600">
-                        <div className="flex items-center gap-4">
-                            <div className="flex items-center gap-1 text-sm font-mono">
-                                {/* Show current world path in code panel */}
-                                {buildBreadcrumbPath(rawGraph, worldStack, currentWorld).map((world, i, arr) => (
-                                    <React.Fragment key={world.id}>
-                                        <span className={i === arr.length - 1 ? 'text-blue-400 font-bold' : 'text-slate-500'}>
-                                            {world.label}
-                                        </span>
-                                        {i < arr.length - 1 && <span className="text-slate-700">/</span>}
-                                    </React.Fragment>
-                                ))}
-                            </div>
-                            <span className="text-slate-400 text-sm">Generated Code</span>
-                        </div>
-
-                        {/* --- EXIT CODE PANEL BUTTON --- */}
-                        <button
-                            onClick={toggleCode}
-                            className="flex items-center gap-2 px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 hover:text-white transition-colors"
-                            title="Close Code Panel"
-                        >
-                            <Code size={16} />
-                            <span className="text-sm">Close</span>
-                        </button>
-                    </div>
-
-                    {/* Code Content */}
-                    <div className="flex-1 p-4 overflow-auto">
-                        <pre className="font-mono text-sm text-green-400 whitespace-pre-wrap h-full">
-                            {codeContent}
-                        </pre>
-                    </div>
-                </div>
-            </div>
-        )}
 
       </div>
 
