@@ -21,47 +21,84 @@ class Synthesizer:
 
     def _synth_expr(self, nid):
         node = self._get_node(nid)
-        if not node: return "None"
-        
+        if not node:
+            print(f"DEBUG: _synth_expr called with invalid node ID: {nid}")
+            return "None"
+
         ntype = node['type']
-        
+        print(f"DEBUG: Synthesizing {ntype} node {nid} with label '{node.get('label', 'N/A')}'")
+
         # Get port defaults if they exist
         port_defaults = node.get('data', {}).get('port_defaults', {})
+        print(f"DEBUG: Port defaults for {nid}: {port_defaults}")
 
-        if ntype == 'LITERAL': return node['label']
-        elif ntype == 'VARIABLE': return node['label']
+        if ntype == 'LITERAL':
+            label = node['label']
+            # Add quotes around strings
+            if isinstance(label, str) and not (label.startswith('"') or label.startswith("'")):
+                # Check if it's a number
+                try:
+                    float(label)
+                    result = label  # It's a number, don't quote
+                except ValueError:
+                    result = f'"{label}"'  # It's a string, add quotes
+            else:
+                result = label
+            print(f"DEBUG: LITERAL {nid} -> {result}")
+            return result
+        elif ntype == 'VARIABLE':
+            result = node['label']
+            print(f"DEBUG: VARIABLE {nid} -> {result}")
+            return result
         elif ntype == 'OPERATOR':
             inputs = self._get_inputs(nid, ["OPERAND"])
-            
+            print(f"DEBUG: OPERATOR {nid} inputs: {[inp for inp in inputs]}")
+
             op0 = port_defaults.get('operand_0', None)
             op1 = port_defaults.get('operand_1', None)
+            print(f"DEBUG: OPERATOR {nid} port_defaults: op0={op0}, op1={op1}")
 
-            op0_str = op0 if op0 is not None else self._synth_expr(inputs[0])
-            op1_str = op1 if op1 is not None else self._synth_expr(inputs[1])
+            op0_str = op0 if op0 is not None else (self._synth_expr(inputs[0]) if len(inputs) > 0 else "None")
+            op1_str = op1 if op1 is not None else (self._synth_expr(inputs[1]) if len(inputs) > 1 else "None")
 
-            return f"({op0_str} {node['label']} {op1_str})"
+            result = f"({op0_str} {node['label']} {op1_str})"
+            print(f"DEBUG: OPERATOR {nid} -> {result}")
+            return result
             
         elif ntype == 'CALL':
             params = node.get('data', {}).get('params', [])
-            wired_args = {e['data'].get('keyword') or e['data'].get('index'): e['source'] 
-                          for e in self.graph['edges'] 
+            wired_args = {e['data'].get('keyword') or e['data'].get('index'): e['source']
+                          for e in self.graph['edges']
                           if e['target'] == nid and e['type'] == 'ARGUMENT'}
-            
+
+            # Also check for DATA_FLOW edges with port_name (from port literals)
+            port_literal_args = {}
+            for edge in self.graph['edges']:
+                if (edge['target'] == nid and edge['type'] == 'DATA_FLOW' and
+                    edge.get('data', {}).get('port_name')):
+                    port_literal_args[edge['data']['port_name']] = edge['source']
+
+            print(f"DEBUG: CALL {nid} wired_args: {wired_args}")
+            print(f"DEBUG: CALL {nid} port_literal_args: {port_literal_args}")
+            print(f"DEBUG: CALL {nid} port_defaults: {port_defaults}")
+
             arg_strs = []
-            
-            # Build argument list, respecting parameters, defaults, and wires
+
+            # Build argument list, respecting parameters, defaults, wires, and port literals
             for i, param in enumerate(params):
                 port_name = param.get('name')
                 port_key_kw = port_name
                 port_key_idx = i
-                
+
                 if port_name in port_defaults:
                     arg_strs.append(f"{port_name}={port_defaults[port_name]}")
+                elif port_name in port_literal_args:
+                    arg_strs.append(f"{port_name}={self._synth_expr(port_literal_args[port_name])}")
                 elif port_key_kw in wired_args:
                     arg_strs.append(f"{port_name}={self._synth_expr(wired_args[port_key_kw])}")
                 elif port_key_idx in wired_args:
                     arg_strs.append(self._synth_expr(wired_args[port_key_idx]))
-            
+
             call_str = f"{node['label']}({', '.join(arg_strs)})"
 
             # Handle method calls
@@ -84,7 +121,9 @@ class Synthesizer:
         elif ntype == 'DICT_CONSTRUCTOR':
             keys = self._get_inputs(nid, ["DICT_KEY"])
             values = self._get_inputs(nid, ["DICT_VALUE"])
-            pairs = [f"{self._synth_expr(k)}: {self._synth_expr(v)}" for k, v in zip(keys, values)]
+            # Only create pairs for the minimum available keys/values
+            min_len = min(len(keys), len(values))
+            pairs = [f"{self._synth_expr(keys[i])}: {self._synth_expr(values[i])}" for i in range(min_len)]
             return f"{{{', '.join(pairs)}}}"
         elif ntype == 'ACCESSOR':
             val_id_list = self._get_inputs(nid, ["ACCESS_VALUE"])
@@ -177,13 +216,21 @@ class Synthesizer:
                 continue 
                 
             elif ntype == 'FOR_BLOCK':
-                iter_str = self._synth_expr(self._get_inputs(node['id'], ["ITERATES_ON"])[0])
-                target_str = node['data']['target']
+                iter_inputs = self._get_inputs(node['id'], ["ITERATES_ON"])
+                if iter_inputs:
+                    iter_str = self._synth_expr(iter_inputs[0])
+                else:
+                    iter_str = "[]"  # Default empty list
+                target_str = node['data'].get('target', 'item')
                 lines.append(f"\n{pre}for {target_str} in {iter_str}:")
                 body = self._write_world(node['id'], indent + 1)
                 lines.extend(body if body else [f"{pre}    pass"])
             elif ntype == 'WHILE_BLOCK':
-                test_str = self._synth_expr(self._get_inputs(node['id'], ["INPUT"])[0])
+                test_inputs = self._get_inputs(node['id'], ["INPUT"])
+                if test_inputs:
+                    test_str = self._synth_expr(test_inputs[0])
+                else:
+                    test_str = "True"  # Default to always true
                 lines.append(f"\n{pre}while {test_str}:")
                 body = self._write_world(node['id'], indent + 1)
                 lines.extend(body if body else [f"{pre}    pass"])

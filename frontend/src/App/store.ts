@@ -24,7 +24,8 @@ type CustomNodeData = {
         value: {isWired: boolean, value: string, portId: string}
     }[];
     port_defaults?: { [key: string]: string };
-    [key: string]: any; 
+    params?: { name: string; optional: boolean }[];
+    [key: string]: any;
 };
 
 type AppNode = Node<CustomNodeData>;
@@ -82,14 +83,17 @@ type EngineNode = {
         [key: string]: any;
     } 
 };
-type EngineEdge = { 
-    source: string; 
-    target: string; 
-    type: string; 
+type EngineEdge = {
+    source: string;
+    target: string;
+    type: string;
     label?: string;
     data?: {
         index?: number;
         keyword?: string;
+        targetHandle?: string;
+        sourceHandle?: string;
+        port_name?: string;
     }
 };
 type GraphData = { nodes: EngineNode[]; edges: EngineEdge[] };
@@ -126,13 +130,21 @@ export type RFState = {
   enterWorld: (nodeId: string) => void;
   goUp: () => void;
   goToWorld: (worldId: string) => void;
-  setLayoutedWorld: (worldId: string, newStack: string[]) => void; // Added helper
+  setLayoutedWorld: (worldId: string, newStack: string[], preservePositions?: boolean) => void; // Added helper
   // --- NEW: ACTIONS ---
   injectCode: (code: string) => Promise<void>;
   runProject: () => Promise<void>;
   removeNodes: (nodeIds: string[]) => Promise<void>;
   addImport: (code: string) => Promise<void>;
   updateNodeLiteral: (nodeId: string, newValue: string) => Promise<void>;
+  // --- NEW GRAPH MUTATION ACTIONS ---
+  addEdge: (source: string, target: string, edgeType?: string, label?: string, data?: any) => Promise<void>;
+  removeEdge: (source: string, target: string, edgeType?: string) => Promise<void>;
+  updatePortLiteral: (nodeId: string, portId: string, newValue: string) => Promise<void>;
+  addListItem: (listNodeId: string, value?: string) => Promise<void>;
+  updateListItem: (listNodeId: string, index: number, newValue: string) => Promise<void>;
+  addDictPair: (dictNodeId: string, key?: string, value?: string) => Promise<void>;
+  updateDictPair: (dictNodeId: string, index: number, keyValue?: string, valueValue?: string) => Promise<void>;
   undo: () => void;
   redo: () => void;
   saveToHistory: () => void;
@@ -220,41 +232,41 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: AppNode[], edg
                 const index = edge.data?.index ?? 0;
                 if (!pairs[index]) pairs[index] = {};
                 const sourceNode = getRawNode(graph, edge.source);
-                const portId = `key_${index}`;
-                
+
                 if (sourceNode && sourceNode.type === 'LITERAL') {
-                    pairs[index].key = { isWired: false, value: sourceNode.label, portId };
+                    pairs[index].key = { isWired: false, value: sourceNode.label };
                     collapsedNodeIds.add(sourceNode.id);
                     collapsedEdgeIds.add(`${edge.source}-${edge.target}-${edge.type}`);
                 } else {
-                    pairs[index].key = { isWired: true, value: "[Wired Key]", portId };
+                    pairs[index].key = { isWired: true, value: "[Wired Key]" };
                 }
             }
             for (const edge of valueEdges) {
                 const index = edge.data?.index ?? 0;
                 if (!pairs[index]) pairs[index] = {};
                 const sourceNode = getRawNode(graph, edge.source);
-                const portId = `value_${index}`;
-                
+
                 if (sourceNode && sourceNode.type === 'LITERAL') {
-                    pairs[index].value = { isWired: false, value: sourceNode.label, portId };
+                    pairs[index].value = { isWired: false, value: sourceNode.label };
                     collapsedNodeIds.add(sourceNode.id);
                     collapsedEdgeIds.add(`${edge.source}-${edge.target}-${edge.type}`);
                 } else {
-                    pairs[index].value = { isWired: true, value: "[Wired Value]", portId };
+                    pairs[index].value = { isWired: true, value: "[Wired Value]" };
                 }
             }
-            targetNodeData.initialPairs = Object.values(pairs).map(p => ({ 
-                key: p.key ?? { isWired: false, value: '?', portId: '?' }, 
-                value: p.value ?? { isWired: false, value: '?', portId: '?' } 
+            targetNodeData.initialPairs = Object.values(pairs).map((p, arrayIndex) => ({
+                key: p.key ? { ...p.key, portId: `key_${arrayIndex}` } : { isWired: false, value: '?', portId: `key_${arrayIndex}` },
+                value: p.value ? { ...p.value, portId: `value_${arrayIndex}` } : { isWired: false, value: '?', portId: `value_${arrayIndex}` }
             }));
         }
         
         else {
             const incomingEdges = allEdges.filter(e => e.target === targetNode.id);
+            console.log(`DEBUG: filterWorld - ${targetNode.id} has ${incomingEdges.length} incoming edges`);
             for (const edge of incomingEdges) {
                 const sourceNode = getRawNode(graph, edge.source);
-                
+                console.log(`DEBUG: filterWorld - examining edge ${edge.source} -> ${edge.target} (${edge.type})`);
+
                 if (sourceNode && sourceNode.type === 'LITERAL') {
                     let portName: string | null = null;
                     if (edge.data?.keyword) portName = edge.data.keyword;
@@ -262,7 +274,7 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: AppNode[], edg
                         const param = (targetNodeData.params as EngineParam[]).find((p, i) => i === edge.data?.index);
                         if(param) portName = param.name;
                     }
-                    
+
                     if (!portName) {
                         if (edge.type === 'OPERAND') portName = `operand_${edge.data?.index ?? 0}`;
                         else if (edge.type === 'ACCESS_KEY') portName = 'access_key';
@@ -271,13 +283,17 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: AppNode[], edg
                         else if (edge.type === 'INPUT') portName = 'value';
                         else if (edge.type === 'WRITES_TO') portName = 'input';
                         else if (edge.type === 'ITERATES_ON') portName = 'iterates_on';
+                        else if (edge.type === 'DATA_FLOW' && edge.data?.port_name) portName = edge.data.port_name;
                     }
+
+                    console.log(`DEBUG: filterWorld - edge has port_name: ${edge.data?.port_name}, determined portName: ${portName}`);
 
                     if (portName) {
                         collapsedNodeIds.add(sourceNode.id);
-                        collapsedEdgeIds.add(`${edge.source}-${edge.target}-${edge.type}`); 
+                        collapsedEdgeIds.add(`${edge.source}-${edge.target}-${edge.type}`);
                         if (targetNodeData.port_defaults) {
                             targetNodeData.port_defaults[portName] = sourceNode.label;
+                            console.log(`DEBUG: filterWorld - set port_defaults[${portName}] = "${sourceNode.label}" for ${targetNode.id}`);
                         }
                     }
                 }
@@ -327,8 +343,8 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: AppNode[], edg
             let targetHandle: string | null = null;
             let label: string | undefined = undefined;
             const targetNode = getRawNode(graph, e.target);
-            if (!targetNode) return { id: `e_${i}`, source: e.source, target: e.target }; 
-            
+            if (!targetNode) return { id: `e_${i}`, source: e.source, target: e.target };
+
             const targetNodeData = processedNodeData.get(e.target) || targetNode.data;
 
             if (e.type === 'ARGUMENT') {
@@ -362,12 +378,15 @@ const filterWorld = (graph: GraphData, worldId: string): { nodes: AppNode[], edg
                 targetHandle = 'attribute_value';
             } else if (e.type === 'ITERATES_ON') {
                 targetHandle = 'iterates_on';
+            } else if (e.type === 'DATA_FLOW') {
+                // For DATA_FLOW edges (manually connected edges), use the stored targetHandle
+                targetHandle = e.data?.targetHandle || null;
             }
 
             return {
-                id: `e_${i}`, 
-                source: e.source, 
-                target: e.target, 
+                id: `e_${i}`,
+                source: e.source,
+                target: e.target,
                 targetHandle: targetHandle,
                 label: label,
                 animated: ['WRITES_TO', 'INPUT'].includes(e.type),
@@ -398,7 +417,14 @@ const useStore = create<RFState>((set, get) => ({
 
   onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) as AppNode[] }),
   onEdgesChange: (changes) => set({ edges: applyEdgeChanges(changes, get().edges) }),
-  onConnect: (connection) => set({ edges: addEdge(connection, get().edges) }),
+  onConnect: async (connection) => {
+      // Use the new backend API instead of local state manipulation
+      const { addEdge } = get();
+      await addEdge(connection.source, connection.target, "DATA_FLOW", undefined, {
+          sourceHandle: connection.sourceHandle,
+          targetHandle: connection.targetHandle
+      });
+  },
 
   loadGraph: (data, applyLayout = true) => {
       const { nodes, edges } = filterWorld(data, 'root');
@@ -414,11 +440,30 @@ const useStore = create<RFState>((set, get) => ({
       });
   },
 
-  setLayoutedWorld: (worldId: string, newStack: string[]) => {
+  setLayoutedWorld: (worldId: string, newStack: string[], preservePositions: boolean = false) => {
       const { rawGraph } = get();
       const { nodes, edges } = filterWorld(rawGraph, worldId);
-      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges, 'TB');
-      set({ worldStack: newStack, currentWorld: worldId, nodes: layoutedNodes, edges: layoutedEdges });
+
+      let finalNodes = nodes;
+      let finalEdges = edges;
+
+      if (!preservePositions) {
+          // Only run layout if positions should not be preserved
+          const layouted = getLayoutedElements(nodes, edges, 'TB');
+          finalNodes = layouted.nodes;
+          finalEdges = layouted.edges;
+      } else {
+          // Preserve existing positions from current nodes
+          const currentNodes = get().nodes;
+          const positionMap = new Map(currentNodes.map(n => [n.id, n.position]));
+
+          finalNodes = nodes.map(node => ({
+              ...node,
+              position: positionMap.get(node.id) || { x: 0, y: 0 }
+          }));
+      }
+
+      set({ worldStack: newStack, currentWorld: worldId, nodes: finalNodes, edges: finalEdges });
   },
 
   enterWorld: (nodeId) => {
@@ -451,14 +496,17 @@ const useStore = create<RFState>((set, get) => ({
   clearOutput: () => set({ outputLogs: [] }),
 
   injectCode: async (code: string) => {
-      const { rawGraph, currentWorld, loadGraph } = get();
+      const { rawGraph, currentWorld, setLayoutedWorld } = get();
       try {
           // Send current graph and code to backend
           const result = await api.injectCode(rawGraph, code, currentWorld);
 
-          // Reload the graph with the updated data from server
+          // Reload the graph with the updated data from server, staying in current world
           if (result.success && result.graph) {
-              loadGraph(result.graph);
+              // Update rawGraph first
+              set({ rawGraph: result.graph });
+              // Then reload the current world view, preserving positions
+              setLayoutedWorld(currentWorld, get().worldStack, true);
               // Optionally log to output panel
               get().addOutputLog(`✨ Injected code into ${currentWorld}`);
           }
@@ -496,11 +544,13 @@ const useStore = create<RFState>((set, get) => ({
   // --- NEW ACTION IMPLEMENTATIONS ---
 
   removeNodes: async (nodeIds: string[]) => {
-      const { rawGraph, loadGraph, addOutputLog } = get();
+      const { rawGraph, currentWorld, setLayoutedWorld, addOutputLog } = get();
       try {
           const result = await api.removeNodes(rawGraph, nodeIds);
           if (result.success) {
-              loadGraph(result.graph); // Reload the graph
+              // Update rawGraph and reload current world view, preserving positions
+              set({ rawGraph: result.graph });
+              setLayoutedWorld(currentWorld, get().worldStack, true);
               addOutputLog(`🗑️ Removed ${nodeIds.length} node(s)`);
           }
       } catch (error: any) {
@@ -509,11 +559,13 @@ const useStore = create<RFState>((set, get) => ({
   },
 
   addImport: async (code: string) => {
-      const { rawGraph, loadGraph, addOutputLog } = get();
+      const { rawGraph, currentWorld, setLayoutedWorld, addOutputLog } = get();
       try {
           const result = await api.addImport(rawGraph, code);
           if (result.success) {
-              loadGraph(result.graph);
+              // Update rawGraph and reload current world view, preserving positions
+              set({ rawGraph: result.graph });
+              setLayoutedWorld(currentWorld, get().worldStack, true);
               addOutputLog(`📥 Added import: ${code}`);
           }
       } catch (error: any) {
@@ -522,7 +574,7 @@ const useStore = create<RFState>((set, get) => ({
   },
 
   updateNodeLiteral: async (nodeId: string, newValue: string) => {
-      const { rawGraph, loadGraph, addOutputLog } = get();
+      const { rawGraph, currentWorld, setLayoutedWorld, addOutputLog } = get();
       try {
           // Note: This API only works if the source is a LITERAL.
           // We need to find the *source* literal node.
@@ -543,11 +595,133 @@ const useStore = create<RFState>((set, get) => ({
           const result = await api.updateNodeLiteral(rawGraph, sourceNodeId, newValue);
 
           if (result.success) {
-              loadGraph(result.graph);
+              // Update rawGraph and reload current world view, preserving positions
+              set({ rawGraph: result.graph });
+              setLayoutedWorld(currentWorld, get().worldStack, true);
               addOutputLog(`✏️ Updated literal ${sourceNodeId} to ${newValue}`);
           }
       } catch (error: any) {
           addOutputLog(`❌ Error updating literal: ${error.message}`);
+      }
+  },
+
+  // --- NEW GRAPH MUTATION ACTION IMPLEMENTATIONS ---
+
+  addEdge: async (source: string, target: string, edgeType: string = "DATA_FLOW", label?: string, data?: any) => {
+      const { rawGraph, currentWorld, setLayoutedWorld, addOutputLog } = get();
+      try {
+          const result = await api.addEdge(rawGraph, source, target, edgeType, label, data);
+          if (result.success) {
+              // Update rawGraph and reload current world view, preserving positions
+              set({ rawGraph: result.graph });
+              setLayoutedWorld(currentWorld, get().worldStack, true);
+              addOutputLog(`🔗 Added edge ${source} -> ${target}`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ Error adding edge: ${error.message}`);
+      }
+  },
+
+  removeEdge: async (source: string, target: string, edgeType?: string) => {
+      const { rawGraph, currentWorld, setLayoutedWorld, addOutputLog } = get();
+      try {
+          const result = await api.removeEdge(rawGraph, source, target, edgeType);
+          if (result.success) {
+              // Update rawGraph and reload current world view, preserving positions
+              set({ rawGraph: result.graph });
+              setLayoutedWorld(currentWorld, get().worldStack, true);
+              addOutputLog(`🔌 Removed edge ${source} -> ${target}`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ Error removing edge: ${error.message}`);
+      }
+  },
+
+  updatePortLiteral: async (nodeId: string, portId: string, newValue: string) => {
+      const { rawGraph, currentWorld, setLayoutedWorld, addOutputLog } = get();
+      try {
+          console.log(`DEBUG: updatePortLiteral called with nodeId=${nodeId}, portId=${portId}, newValue=${newValue}`);
+          console.log(`DEBUG: Current graph has ${rawGraph.nodes.length} nodes, ${rawGraph.edges.length} edges`);
+
+          const result = await api.updatePortLiteral(rawGraph, nodeId, portId, newValue);
+
+          if (result.success) {
+              console.log(`DEBUG: updatePortLiteral API call successful`);
+              console.log(`DEBUG: Updated graph has ${result.graph.nodes.length} nodes, ${result.graph.edges.length} edges`);
+
+              // Update rawGraph and reload current world view, preserving positions
+              set({ rawGraph: result.graph });
+              setLayoutedWorld(currentWorld, get().worldStack, true);
+              addOutputLog(`✏️ Updated port ${portId} on ${nodeId} to ${newValue}`);
+          } else {
+              console.log(`DEBUG: updatePortLiteral API call failed: ${result.error}`);
+          }
+      } catch (error: any) {
+          console.log(`DEBUG: updatePortLiteral exception: ${error.message}`);
+          addOutputLog(`❌ Error updating port literal: ${error.message}`);
+      }
+  },
+
+  addListItem: async (listNodeId: string, value: string = "''") => {
+      const { rawGraph, currentWorld, setLayoutedWorld, addOutputLog } = get();
+      try {
+          const result = await api.addListItem(rawGraph, listNodeId, value);
+          if (result.success) {
+              // Update rawGraph and reload current world view, preserving positions
+              set({ rawGraph: result.graph });
+              setLayoutedWorld(currentWorld, get().worldStack, true);
+              addOutputLog(`➕ Added list item to ${listNodeId}`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ Error adding list item: ${error.message}`);
+      }
+  },
+
+  updateListItem: async (listNodeId: string, index: number, newValue: string) => {
+      const { rawGraph, currentWorld, setLayoutedWorld, addOutputLog } = get();
+      try {
+          const result = await api.updateListItem(rawGraph, listNodeId, index, newValue);
+          if (result.success) {
+              // Update rawGraph and reload current world view, preserving positions
+              set({ rawGraph: result.graph });
+              setLayoutedWorld(currentWorld, get().worldStack, true);
+              addOutputLog(`✏️ Updated list item ${index} in ${listNodeId} to ${newValue}`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ Error updating list item: ${error.message}`);
+      }
+  },
+
+  addDictPair: async (dictNodeId: string, key: string = "'new_key'", value: string = "''") => {
+      const { rawGraph, currentWorld, setLayoutedWorld, addOutputLog } = get();
+      try {
+          const result = await api.addDictPair(rawGraph, dictNodeId, key, value);
+          if (result.success) {
+              // Update rawGraph and reload current world view, preserving positions
+              set({ rawGraph: result.graph });
+              setLayoutedWorld(currentWorld, get().worldStack, true);
+              addOutputLog(`➕ Added dict pair to ${dictNodeId}`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ Error adding dict pair: ${error.message}`);
+      }
+  },
+
+  updateDictPair: async (dictNodeId: string, index: number, keyValue?: string, valueValue?: string) => {
+      const { rawGraph, currentWorld, setLayoutedWorld, addOutputLog } = get();
+      try {
+          const result = await api.updateDictPair(rawGraph, dictNodeId, index, keyValue, valueValue);
+          if (result.success) {
+              // Update rawGraph and reload current world view, preserving positions
+              set({ rawGraph: result.graph });
+              setLayoutedWorld(currentWorld, get().worldStack, true);
+              const changes = [];
+              if (keyValue !== undefined) changes.push(`key=${keyValue}`);
+              if (valueValue !== undefined) changes.push(`value=${valueValue}`);
+              addOutputLog(`✏️ Updated dict pair ${index} in ${dictNodeId}: ${changes.join(', ')}`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ Error updating dict pair: ${error.message}`);
       }
   },
 

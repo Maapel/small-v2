@@ -29,6 +29,7 @@ const selector = (state: RFState) => ({
   injectCode: state.injectCode,
   runProject: state.runProject,
   removeNodes: state.removeNodes,
+  removeEdge: state.removeEdge,
   undo: state.undo,
   redo: state.redo,
 });
@@ -61,6 +62,7 @@ export default function Flow() {
     injectCode,
     runProject,
     removeNodes,
+    removeEdge,
     undo,
     redo
   } = useStore(useShallow(selector));
@@ -127,6 +129,14 @@ export default function Flow() {
       removeNodes(nodeIds);
   }, [removeNodes]);
 
+  // --- NEW HANDLER for Edge Deletion ---
+  const onEdgesDelete = useCallback((changes: any[]) => {
+      // Remove edges one by one
+      changes.forEach(edge => {
+        removeEdge(edge.source, edge.target, edge.type);
+      });
+  }, [removeEdge]);
+
   if (!isFileLoaded) {
     return (
         <div 
@@ -158,6 +168,7 @@ export default function Flow() {
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
+                onEdgesDelete={onEdgesDelete}
                 nodeTypes={nodeTypes}
                 onNodeDoubleClick={onNodeDoubleClick}
                 onPaneContextMenu={onPaneContextMenu}

@@ -523,10 +523,40 @@ def inject_code(existing_graph, code_snippet, target_world="root"):
     try:
         tree = cst.parse_module(code_snippet)
         visitor = WorldVisitor(start_world=target_world)
-        # TODO: Symbol table must be pre-populated from existing_graph for injection to link correctly
+
+        # Pre-populate symbol table from existing graph for proper variable linking
+        # Build symbol table by traversing existing nodes
+        def populate_symbols(world_id, visitor, parent_stack=None):
+            if parent_stack is None:
+                parent_stack = []
+
+            world_nodes = [n for n in existing_graph['nodes'] if n['world'] == world_id]
+
+            # Push scope for this world
+            visitor.symbols.push_scope()
+
+            for node in world_nodes:
+                if node['type'] == 'VARIABLE':
+                    # Add to symbol table
+                    visitor.symbols.define_write(node['label'], node['id'], world_id)
+                elif node['type'] in ['FUNCTION_DEF', 'CLASS_DEF']:
+                    # Recursively populate nested worlds
+                    populate_symbols(node['id'], visitor, parent_stack + [world_id])
+
+            # Don't pop the root scope
+            if parent_stack:
+                visitor.symbols.pop_scope()
+
+        # Populate symbols starting from root
+        populate_symbols("root", visitor)
+
+        # Switch to target world for injection
+        visitor.current_world = target_world
+        visitor.world_stack = [target_world]  # Reset world stack for injection
+
         tree.visit(visitor)
         visitor.link_calls()
-        visitor.hydrate_unlinked_calls() 
+        visitor.hydrate_unlinked_calls()
         existing_graph['nodes'].extend(visitor.graph['nodes'])
         existing_graph['edges'].extend(visitor.graph['edges'])
         return True, len(visitor.graph['nodes'])
@@ -562,15 +592,243 @@ def update_node_literal(graph: dict, node_id: str, new_label: str) -> dict:
                 break
     return graph
 
-if __name__ == "__main__":
-    target = sys.argv[1] if len(sys.argv) > 1 else "playground/target.py"
-    if os.path.exists(target):
-        with open(target, "r") as f: source = f.read()
-        visitor = WorldVisitor()
-        cst.parse_module(source).visit(visitor)
-        visitor.link_calls()
-        visitor.hydrate_unlinked_calls()
-        with open("graph.json", "w") as f: json.dump(visitor.graph, f, indent=2)
-        print(f"✅ Parsed {target} -> graph.json ({len(visitor.graph['nodes'])} nodes)")
+# --- NEW GRAPH MUTATION HELPERS ---
+
+def add_edge(graph: dict, source: str, target: str, edge_type: str = "DATA_FLOW", label: str = None, data: dict = None) -> dict:
+    """
+    Adds an edge between two nodes if it doesn't already exist.
+    """
+    if not any(e['source'] == source and e['target'] == target and e['type'] == edge_type for e in graph['edges']):
+        graph['edges'].append({"source": source, "target": target, "type": edge_type, "label": label, "data": data or {}})
+    return graph
+
+def remove_edge(graph: dict, source: str, target: str, edge_type: str = None) -> dict:
+    """
+    Removes edges between two nodes. If edge_type is specified, only removes edges of that type.
+    """
+    graph['edges'] = [
+        e for e in graph['edges']
+        if not (e['source'] == source and e['target'] == target and (edge_type is None or e['type'] == edge_type))
+    ]
+    return graph
+
+def update_port_literal(graph: dict, node_id: str, port_id: str, new_value: str) -> dict:
+    """
+    Updates a port literal value. This creates or updates a LITERAL node connected to the specified port.
+    Handles string literals by storing them without quotes.
+    """
+    # Clean the input value - if it looks like a string literal, extract the content
+    clean_value = new_value.strip()
+    if (clean_value.startswith('"') and clean_value.endswith('"')) or \
+       (clean_value.startswith("'") and clean_value.endswith("'")):
+        # It's a quoted string, extract the content
+        clean_value = clean_value[1:-1]
+
+    # Find the target node
+    target_node = None
+    for node in graph['nodes']:
+        if node['id'] == node_id:
+            target_node = node
+            break
+
+    if not target_node:
+        return graph
+
+    # Find existing literal edge for this port
+    existing_edge = None
+    existing_literal = None
+    for edge in graph['edges']:
+        if edge['target'] == node_id and edge.get('data', {}).get('port_name') == port_id:
+            existing_edge = edge
+            # Find the literal node
+            for node in graph['nodes']:
+                if node['id'] == edge['source'] and node['type'] == 'LITERAL':
+                    existing_literal = node
+                    break
+            break
+
+    if existing_literal:
+        # Update existing literal
+        existing_literal['label'] = clean_value
     else:
-        print(f"❌ Target file not found: {target}")
+        # Create new literal node
+        literal_id = f"LITERAL_{uuid.uuid4().hex[:8]}"
+        graph['nodes'].append({
+            "id": literal_id,
+            "type": "LITERAL",
+            "label": clean_value,
+            "world": target_node['world'],
+            "data": {}
+        })
+
+        # Create edge to the port
+        edge_data = {"port_name": port_id}
+        graph['edges'].append({
+            "source": literal_id,
+            "target": node_id,
+            "type": "DATA_FLOW",
+            "label": None,
+            "data": edge_data
+        })
+
+    return graph
+
+def add_list_item(graph: dict, list_node_id: str, value: str = "''") -> dict:
+    """
+    Adds a new item to a LIST_CONSTRUCTOR node.
+    """
+    # Find the list node
+    list_node = None
+    for node in graph['nodes']:
+        if node['id'] == list_node_id and node['type'] == 'LIST_CONSTRUCTOR':
+            list_node = node
+            break
+
+    if not list_node:
+        return graph
+
+    # Find the highest index for existing list elements
+    max_index = -1
+    for edge in graph['edges']:
+        if edge['target'] == list_node_id and edge['type'] == 'LIST_ELEMENT':
+            index = edge.get('data', {}).get('index', 0)
+            max_index = max(max_index, index)
+
+    new_index = max_index + 1
+
+    # Create literal node for the new item
+    literal_id = f"LITERAL_{uuid.uuid4().hex[:8]}"
+    graph['nodes'].append({
+        "id": literal_id,
+        "type": "LITERAL",
+        "label": value,
+        "world": list_node['world'],
+        "data": {}
+    })
+
+    # Create edge
+    graph['edges'].append({
+        "source": literal_id,
+        "target": list_node_id,
+        "type": "LIST_ELEMENT",
+        "label": None,
+        "data": {"index": new_index}
+    })
+
+    return graph
+
+def update_list_item(graph: dict, list_node_id: str, index: int, new_value: str) -> dict:
+    """
+    Updates a list item at the specified index.
+    """
+    # Find the literal node connected to this list element
+    target_edge = None
+    for edge in graph['edges']:
+        if (edge['target'] == list_node_id and edge['type'] == 'LIST_ELEMENT' and
+            edge.get('data', {}).get('index') == index):
+            target_edge = edge
+            break
+
+    if not target_edge:
+        return graph
+
+    # Find and update the literal node
+    for node in graph['nodes']:
+        if node['id'] == target_edge['source'] and node['type'] == 'LITERAL':
+            node['label'] = new_value
+            break
+
+    return graph
+
+def add_dict_pair(graph: dict, dict_node_id: str, key: str = "'new_key'", value: str = "''") -> dict:
+    """
+    Adds a new key-value pair to a DICT_CONSTRUCTOR node.
+    """
+    # Find the dict node
+    dict_node = None
+    for node in graph['nodes']:
+        if node['id'] == dict_node_id and node['type'] == 'DICT_CONSTRUCTOR':
+            dict_node = node
+            break
+
+    if not dict_node:
+        return graph
+
+    # Find the highest index for existing dict elements
+    max_index = -1
+    for edge in graph['edges']:
+        if edge['target'] == dict_node_id and (edge['type'] == 'DICT_KEY' or edge['type'] == 'DICT_VALUE'):
+            index = edge.get('data', {}).get('index', 0)
+            max_index = max(max_index, index)
+
+    new_index = max_index + 1
+
+    # Create literal nodes for key and value
+    key_literal_id = f"LITERAL_{uuid.uuid4().hex[:8]}"
+    value_literal_id = f"LITERAL_{uuid.uuid4().hex[:8]}"
+
+    graph['nodes'].extend([
+        {
+            "id": key_literal_id,
+            "type": "LITERAL",
+            "label": key,
+            "world": dict_node['world'],
+            "data": {}
+        },
+        {
+            "id": value_literal_id,
+            "type": "LITERAL",
+            "label": value,
+            "world": dict_node['world'],
+            "data": {}
+        }
+    ])
+
+    # Create edges
+    graph['edges'].extend([
+        {
+            "source": key_literal_id,
+            "target": dict_node_id,
+            "type": "DICT_KEY",
+            "label": None,
+            "data": {"index": new_index}
+        },
+        {
+            "source": value_literal_id,
+            "target": dict_node_id,
+            "type": "DICT_VALUE",
+            "label": None,
+            "data": {"index": new_index}
+        }
+    ])
+
+    return graph
+
+def update_dict_pair(graph: dict, dict_node_id: str, index: int, key_value: str = None, value_value: str = None) -> dict:
+    """
+    Updates a dict pair at the specified index. Pass None to leave unchanged.
+    """
+    # Find the literal nodes connected to this dict element
+    key_edge = None
+    value_edge = None
+
+    for edge in graph['edges']:
+        if edge['target'] == dict_node_id:
+            if edge['type'] == 'DICT_KEY' and edge.get('data', {}).get('index') == index:
+                key_edge = edge
+            elif edge['type'] == 'DICT_VALUE' and edge.get('data', {}).get('index') == index:
+                value_edge = edge
+
+    # Update key literal if provided
+    if key_value is not None and key_edge:
+        for node in graph['nodes']:
+            if node['id'] == key_edge['source'] and node['type'] == 'LITERAL':
+                node['label'] = key_value
+                break
+
+    # Update value literal if provided
+    if value_value is not None and value_edge:
+        for node in graph['nodes']:
+            if node['id'] == value_edge['source'] and node['type'] == 'LITERAL':
+                node['label'] = value_value
+                break

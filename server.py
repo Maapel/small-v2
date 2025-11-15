@@ -48,6 +48,51 @@ class UpdateLiteralRequest(BaseModel):
     nodeId: str
     newValue: str
 
+# --- NEW GRAPH MUTATION REQUEST MODELS ---
+class AddEdgeRequest(BaseModel):
+    graph: dict
+    source: str
+    target: str
+    edgeType: str = "DATA_FLOW"
+    label: str = None
+    data: dict = None
+
+class RemoveEdgeRequest(BaseModel):
+    graph: dict
+    source: str
+    target: str
+    edgeType: str = None
+
+class UpdatePortLiteralRequest(BaseModel):
+    graph: dict
+    nodeId: str
+    portId: str
+    newValue: str
+
+class AddListItemRequest(BaseModel):
+    graph: dict
+    listNodeId: str
+    value: str = "''"
+
+class UpdateListItemRequest(BaseModel):
+    graph: dict
+    listNodeId: str
+    index: int
+    newValue: str
+
+class AddDictPairRequest(BaseModel):
+    graph: dict
+    dictNodeId: str
+    key: str = "'new_key'"
+    value: str = "''"
+
+class UpdateDictPairRequest(BaseModel):
+    graph: dict
+    dictNodeId: str
+    index: int
+    keyValue: str = None
+    valueValue: str = None
+
 @app.post("/run")
 def run_code_endpoint(req: RunRequest):
     """
@@ -143,6 +188,72 @@ def update_literal_endpoint(req: UpdateLiteralRequest):
         # This is a conceptual hack. In a real system, this would be more complex.
         # This finds the *literal node* and updates its label.
         updated_graph = graph_parser.update_node_literal(req.graph, req.nodeId, req.newValue)
+        return {"success": True, "graph": updated_graph}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- NEW GRAPH MUTATION ENDPOINTS ---
+
+@app.post("/op/add-edge")
+def add_edge_endpoint(req: AddEdgeRequest):
+    try:
+        updated_graph = graph_parser.add_edge(req.graph, req.source, req.target, req.edgeType, req.label, req.data)
+        return {"success": True, "graph": updated_graph}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/op/remove-edge")
+def remove_edge_endpoint(req: RemoveEdgeRequest):
+    try:
+        updated_graph = graph_parser.remove_edge(req.graph, req.source, req.target, req.edgeType)
+        return {"success": True, "graph": updated_graph}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/op/update-port-literal")
+def update_port_literal_endpoint(req: UpdatePortLiteralRequest):
+    try:
+        print(f"DEBUG: update_port_literal called with node_id={req.nodeId}, port_id={req.portId}, new_value={req.newValue}")
+        print(f"DEBUG: Graph has {len(req.graph['nodes'])} nodes, {len(req.graph['edges'])} edges before update")
+
+        updated_graph = graph_parser.update_port_literal(req.graph, req.nodeId, req.portId, req.newValue)
+
+        print(f"DEBUG: update_port_literal completed, graph has {len(updated_graph['nodes'])} nodes, {len(updated_graph['edges'])} edges after update")
+        return {"success": True, "graph": updated_graph}
+    except Exception as e:
+        print(f"ERROR: update_port_literal failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/op/add-list-item")
+def add_list_item_endpoint(req: AddListItemRequest):
+    try:
+        updated_graph = graph_parser.add_list_item(req.graph, req.listNodeId, req.value)
+        return {"success": True, "graph": updated_graph}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/op/update-list-item")
+def update_list_item_endpoint(req: UpdateListItemRequest):
+    try:
+        updated_graph = graph_parser.update_list_item(req.graph, req.listNodeId, req.index, req.newValue)
+        return {"success": True, "graph": updated_graph}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/op/add-dict-pair")
+def add_dict_pair_endpoint(req: AddDictPairRequest):
+    try:
+        updated_graph = graph_parser.add_dict_pair(req.graph, req.dictNodeId, req.key, req.value)
+        return {"success": True, "graph": updated_graph}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/op/update-dict-pair")
+def update_dict_pair_endpoint(req: UpdateDictPairRequest):
+    try:
+        updated_graph = graph_parser.update_dict_pair(req.graph, req.dictNodeId, req.index, req.keyValue, req.valueValue)
         return {"success": True, "graph": updated_graph}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

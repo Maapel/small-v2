@@ -24,7 +24,21 @@ import {
 // --- Custom Event Dispatcher ---
 const dispatchGraphUpdate = (action: string, payload: any) => {
     console.warn(`EVENT: ${action}`, payload);
-    alert(`This action (${action}) would trigger a backend graph update.`);
+    const store = useStore.getState();
+
+    switch (action) {
+        case 'UPDATE_PORT_LITERAL':
+            store.updatePortLiteral(payload.nodeId, payload.portId, payload.newValue);
+            break;
+        case 'ADD_LIST_ITEM':
+            store.addListItem(payload.nodeId, payload.value);
+            break;
+        case 'ADD_DICT_PAIR':
+            store.addDictPair(payload.nodeId, payload.key, payload.value);
+            break;
+        default:
+            console.warn(`Unknown action: ${action}`);
+    }
 };
 
 
@@ -49,6 +63,15 @@ const Port = memo(({
     const [inputWidth, setInputWidth] = useState(0);
     const spanRef = React.useRef<HTMLSpanElement>(null);
 
+    // Update currentValue when hardcodedValue changes (e.g., after backend update)
+    React.useEffect(() => {
+        console.log(`DEBUG: Port useEffect for ${nodeId}:${id} - isConnected=${isConnected}, hardcodedValue=${hardcodedValue}, currentValue=${currentValue}`);
+        if (!isConnected && hardcodedValue !== undefined) {
+            console.log(`DEBUG: Port updating currentValue from ${currentValue} to ${hardcodedValue}`);
+            setCurrentValue(hardcodedValue);
+        }
+    }, [hardcodedValue, isConnected]);
+
     React.useEffect(() => {
         if (spanRef.current) {
             setInputWidth(spanRef.current.scrollWidth + 2); // Add some padding
@@ -61,9 +84,13 @@ const Port = memo(({
 
     const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
         const newValue = e.currentTarget.value;
+        console.log(`DEBUG: Port handleBlur called for nodeId=${nodeId}, portId=${id}, newValue="${newValue}", hardcodedValue="${hardcodedValue}"`);
         setCurrentValue(newValue);
         if (newValue !== (hardcodedValue ?? '')) {
+            console.log(`DEBUG: Port value changed, dispatching UPDATE_PORT_LITERAL`);
             dispatchGraphUpdate('UPDATE_PORT_LITERAL', { nodeId, portId: id, newValue });
+        } else {
+            console.log(`DEBUG: Port value unchanged, not dispatching`);
         }
     };
     
@@ -107,7 +134,8 @@ const Port = memo(({
 });
 
 // --- Base Node (for most nodes) ---
-const BlenderNode = memo(({ id: nodeId, data, icon: Icon, color, children, hasOutput = true, outputLabel = "value" }: any) => {
+const BlenderNode = memo((props: { id: string, data: any, icon: React.ElementType, color: string, children?: React.ReactNode, hasOutput?: boolean, outputLabel?: string }) => {
+    const { id: nodeId, data, icon: Icon, color, children, hasOutput = true, outputLabel = "value" } = props;
     const [isExpanded, setIsExpanded] = useState(false);
     const [showUsages, setShowUsages] = useState(false);
     
@@ -152,7 +180,7 @@ const BlenderNode = memo(({ id: nodeId, data, icon: Icon, color, children, hasOu
             <div className="flex items-center gap-2 p-2 border-b" style={{ borderColor: color }}>
                 <Icon className="w-4 h-4" style={{ color: color }} />
                 <span className="text-sm font-bold truncate text-slate-100">{data.label}</span>
-                {children} 
+                {children}
             </div>
 
             <div className="flex justify-between">
@@ -229,16 +257,16 @@ export const CallNode = memo((props: NodeProps) => {
             window.dispatchEvent(new CustomEvent('enter-world', { detail: data.target_world }));
         }
     };
-    const params = data.params || [];
+    const params: any[] = Array.isArray(data.params) ? [...data.params] : [];
     if (data.is_method) {
         params.unshift({ name: "attribute_value", optional: false });
     }
     return (
         <BlenderNode {...props} id={id} icon={Activity} color="#f59e0b" outputLabel="return" data={{...data, params}}>
              {data.target_world && (
-                 <button 
-                    onClick={handleZoom} 
-                    className="ml-auto p-1 text-slate-500 hover:text-blue-400" 
+                 <button
+                    onClick={handleZoom}
+                    className="ml-auto p-1 text-slate-500 hover:text-blue-400"
                     title="Zoom into definition"
                 ><ExternalLink size={12} /></button>
              )}
@@ -331,10 +359,10 @@ export const AttributeNode = (props: NodeProps) => (
 // --- NEW: Custom ListConstructorNode (implements your UI spec) ---
 export const ListConstructorNode = memo((props: NodeProps) => {
     const { id: nodeId, data } = props;
-    
+
     // Get the initial items pre-processed by the store
     // This array now contains objects for *both* literals and wired inputs
-    const initialItems: {isWired: boolean, value: string, portId: string}[] = data.initialItems || [];
+    const initialItems: {isWired: boolean, value: string, portId: string}[] = (data as any).initialItems || [];
     
     const handleAddItem = () => {
         dispatchGraphUpdate('ADD_LIST_ITEM', { nodeId, value: "''" });
@@ -391,12 +419,12 @@ export const ListConstructorNode = memo((props: NodeProps) => {
 // --- NEW: Custom DictConstructorNode (implements your UI spec) ---
 export const DictConstructorNode = memo((props: NodeProps) => {
     const { id: nodeId, data } = props;
-    
+
     // Get the initial pairs pre-processed by the store
     const initialPairs: {
         key: {isWired: boolean, value: string, portId: string},
         value: {isWired: boolean, value: string, portId: string}
-    }[] = data.initialPairs || [];
+    }[] = (data as any).initialPairs || [];
     
     const handleAddPair = () => {
         dispatchGraphUpdate('ADD_DICT_PAIR', { nodeId, key: "'new_key'", value: "''" });
