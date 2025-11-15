@@ -131,7 +131,7 @@ export type RFState = {
   historyIndex: number;
 
   // --- NEW: ACTIONS ---
-  newGraph: () => void;
+  resetGraph: () => void;
   loadGraphFromPy: (code: string) => Promise<void>;
   saveGraph: (filepath?: string) => Promise<void>;
 
@@ -418,9 +418,6 @@ const useStore = create<RFState>((set, get) => ({
   // --- NEW: Code Panel State ---
   isCodeOpen: false,
   codeContent: '',
-  newGraph: () => {},
-  loadGraphFromPy: async (code: string) => {},
-  saveGraph: async (filepath?: string) => {},
 
   // History tracking - TODO: Implement later
   history: [] as GraphData[],
@@ -739,6 +736,51 @@ const useStore = create<RFState>((set, get) => ({
           }
       } catch (error: any) {
           addOutputLog(`❌ Error updating dict pair: ${error.message}`);
+      }
+  },
+
+  // --- NEW FILE ACTIONS ---
+  resetGraph: () => {
+      set({
+          nodes: [],
+          edges: [],
+          rawGraph: { nodes: [], edges: [] },
+          currentWorld: 'root',
+          worldStack: [],
+          outputLogs: ["--- New Project ---"],
+          isOutputOpen: true,
+          isCodeOpen: false, // Reset view mode
+      });
+  },
+
+  loadGraphFromPy: async (code: string) => {
+      const { loadGraph, addOutputLog } = get();
+      try {
+          const result = await api.parseCode(code);
+          if (result.success && result.graph) {
+              loadGraph(result.graph);
+              addOutputLog(`🐍 Parsed and loaded Python code with ${result.graph.nodes.length} nodes.`);
+          }
+      } catch (error: any) {
+          addOutputLog(`❌ Parse error: ${error.message}`);
+      }
+  },
+
+  saveGraph: async (filepath?: string) => {
+      const { rawGraph, addOutputLog } = get();
+      const path = filepath || 'playground/graph.json'; // Default save path
+      try {
+          // Download as JSON file to browser
+          const blob = new Blob([JSON.stringify(rawGraph, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = path.split('/').pop() || 'graph.json'; // Extract filename
+          a.click();
+          URL.revokeObjectURL(url);
+          addOutputLog(`💾 Graph saved as ${path}`);
+      } catch (error: any) {
+          addOutputLog(`❌ Save error: ${error.message}`);
       }
   },
 

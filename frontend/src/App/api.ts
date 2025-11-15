@@ -134,6 +134,20 @@ export const api = {
         return response.json();
     },
 
+    // --- NEW: Parse Python code to graph ---
+    parseCode: async (code: string) => {
+        const response = await fetch(`${API_URL}/parse`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code }),
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Failed to parse Python code');
+        }
+        return response.json();
+    },
+
     // --- NEW: Code synthesis for debugging ---
     synthesize: async (graph: any, nodeId?: string, worldId?: string) => {
         const response = await fetch(`${API_URL}/synthesize`, {

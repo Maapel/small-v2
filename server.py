@@ -91,6 +91,10 @@ class AddDictPairRequest(BaseModel):
     key: str = "'new_key'"
     value: str = "''"
 
+# --- NEW: Parse Python code to graph ---
+class ParseRequest(BaseModel):
+    code: str
+
 class UpdateDictPairRequest(BaseModel):
     graph: dict
     dictNodeId: str
@@ -291,6 +295,30 @@ def update_dict_pair_endpoint(req: UpdateDictPairRequest):
     try:
         updated_graph = graph_parser.update_dict_pair(req.graph, req.dictNodeId, req.index, req.keyValue, req.valueValue)
         return {"success": True, "graph": updated_graph}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- NEW: Parse Python code into graph ---
+@app.post("/parse")
+def parse_code_endpoint(req: ParseRequest):
+    """
+    Parses a full Python file into a fresh graph.
+    """
+    try:
+        # Start with a clean empty graph
+        empty_graph = {"nodes": [], "edges": []}
+
+        # Inject code into the root of this empty graph
+        success, msg = graph_parser.inject_code(empty_graph, req.code, "root")
+
+        if not success:
+            raise HTTPException(status_code=400, detail=msg)
+
+        return {
+            "success": True,
+            "message": f"Parsed {len(empty_graph['nodes'])} nodes.",
+            "graph": empty_graph
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

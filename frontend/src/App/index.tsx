@@ -6,8 +6,9 @@ import { nodeTypes } from './Nodes';
 import Sidebar from './Sidebar';
 import OutputPanel from './OutputPanel'; // --- NEW IMPORT ---
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, FileJson, Menu, FileText, Terminal, Play, Undo, Redo, Code } from 'lucide-react'; // Added Terminal, Play, Undo, Redo, Code
+import { ArrowLeft, FileJson, Menu, FileText, Terminal, Play, Undo, Redo, Code, FilePlus, Save, Download } from 'lucide-react'; // Added File, Save, Download
 import InjectModal from './InjectModal';
+import { api } from './api'; // Import api for file operations
 
 const selector = (state: RFState) => ({
   nodes: state.nodes,
@@ -30,6 +31,10 @@ const selector = (state: RFState) => ({
   isCodeOpen: state.isCodeOpen,
   codeContent: state.codeContent,
   toggleCode: state.toggleCode,
+  // --- NEW: File Actions ---
+  resetGraph: state.resetGraph,
+  loadGraphFromPy: state.loadGraphFromPy,
+  saveGraph: state.saveGraph,
   injectCode: state.injectCode,
   runProject: state.runProject,
   removeNodes: state.removeNodes,
@@ -65,6 +70,8 @@ export default function Flow() {
     toggleOutput, isOutputOpen,
     // --- NEW: Code Panel ---
     isCodeOpen, toggleCode, codeContent,
+    // --- NEW: File Actions ---
+    resetGraph, loadGraphFromPy, saveGraph,
     injectCode,
     runProject,
     removeNodes,
@@ -112,20 +119,33 @@ export default function Flow() {
       }
   }, [enterWorld]);
 
-  const onDrop = useCallback((e: React.DragEvent) => {
+  const onDrop = useCallback(async (e: React.DragEvent) => {
       e.preventDefault(); e.stopPropagation();
       const file = e.dataTransfer.files[0];
       if (file) {
           const reader = new FileReader();
           reader.onload = (ev) => {
-              try {
-                  loadGraph(JSON.parse(ev.target?.result as string));
-                  setIsFileLoaded(true);
-              } catch (err) { alert("Invalid graph JSON"); }
+              const text = ev.target?.result as string;
+
+              if (file.name.endsWith('.json')) {
+                  try {
+                      loadGraph(JSON.parse(text));
+                      setIsFileLoaded(true);
+                  } catch (err) { alert("Invalid graph JSON"); }
+              } else if (file.name.endsWith('.py')) {
+                  try {
+                      loadGraphFromPy(text);
+                      setIsFileLoaded(true);
+                  } catch (err: any) {
+                      alert(`Failed to parse Python: ${err.message}`);
+                  }
+              } else {
+                  alert("Please drop a .json or .py file");
+              }
           };
           reader.readAsText(file);
       }
-  }, [loadGraph]);
+  }, [loadGraph, loadGraphFromPy]);
 
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); }, []);
 
@@ -151,7 +171,19 @@ export default function Flow() {
             onDragOver={onDragOver}
         >
             <FileJson size={48} className="mb-4 opacity-50" />
-            <p className="text-xl font-medium">Drop graph.json here</p>
+            <p className="text-xl font-medium mb-6">Drop .json or .py file here</p>
+
+            <div className="flex gap-4">
+                <button
+                    onClick={() => {
+                        resetGraph();
+                        setIsFileLoaded(true);
+                    }}
+                    className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition-colors"
+                >
+                    Create New Project
+                </button>
+            </div>
         </div>
     );
   }
@@ -246,6 +278,47 @@ export default function Flow() {
                             ${isSidebarOpen && isFileLoaded ? 'mr-72' : ''}
                         `}
                     >
+                        {/* File Operations */}
+                        <div className="flex items-center gap-1 mr-4 border-r border-slate-700 pr-4">
+                            <button
+                                onClick={resetGraph}
+                                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded"
+                                title="New Empty Graph"
+                            >
+                                <FilePlus size={20} />
+                            </button>
+
+                            <button
+                                onClick={() => saveGraph()}
+                                className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded"
+                                title="Save Graph (JSON)"
+                            >
+                                <Save size={20} />
+                            </button>
+
+                            <button
+                                onClick={async () => {
+                                    try {
+                                        const result = await api.synthesize(rawGraph);
+                                        if (result.success) {
+                                            const blob = new Blob([result.code], { type: 'text/plain' });
+                                            const url = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            a.download = 'script.py';
+                                            a.click();
+                                            URL.revokeObjectURL(url);
+                                        }
+                                    } catch (e) { alert("Export failed"); }
+                                }}
+                                className="p-2 text-slate-400 hover:text-green-400 hover:bg-slate-800 rounded"
+                                title="Export Python Code"
+                            >
+                                <Download size={20} />
+                            </button>
+                        </div>
+
+                        {/* World Navigation */}
                         <div className="flex items-center gap-1 text-sm font-mono mr-2">
                             {buildBreadcrumbPath(rawGraph, worldStack, currentWorld).map((world, i, arr) => (
                                 <React.Fragment key={world.id}>
