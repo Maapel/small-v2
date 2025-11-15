@@ -6,7 +6,7 @@ import { nodeTypes } from './Nodes';
 import Sidebar from './Sidebar';
 import OutputPanel from './OutputPanel'; // --- NEW IMPORT ---
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, FileJson, Menu, FileText, Terminal, Play, Undo, Redo } from 'lucide-react'; // Added Terminal, Play, Undo, Redo
+import { ArrowLeft, FileJson, Menu, FileText, Terminal, Play, Undo, Redo, Code } from 'lucide-react'; // Added Terminal, Play, Undo, Redo, Code
 import InjectModal from './InjectModal';
 
 const selector = (state: RFState) => ({
@@ -26,6 +26,10 @@ const selector = (state: RFState) => ({
   toggleSidebar: state.toggleSidebar,
   toggleOutput: state.toggleOutput, // --- NEW ---
   isOutputOpen: state.isOutputOpen, // --- NEW ---
+  // --- NEW: Code Panel ---
+  isCodeOpen: state.isCodeOpen,
+  codeContent: state.codeContent,
+  toggleCode: state.toggleCode,
   injectCode: state.injectCode,
   runProject: state.runProject,
   removeNodes: state.removeNodes,
@@ -39,16 +43,16 @@ const buildBreadcrumbPath = (graph: RFState['rawGraph'], worldStack: string[], c
     const path = [...worldStack, currentWorld];
     return path.map(worldId => {
         if (worldId === 'root') return { id: 'root', label: 'root' };
-        if (worldId === 'world_imports') return { id: 'world_imports', label: 'imports' }; 
+        if (worldId === 'world_imports') return { id: 'world_imports', label: 'imports' };
         const node = graph.nodes.find(n => n.id === worldId);
         return { id: worldId, label: node?.label || '...' };
     });
 };
 
 const ZOOMABLE_NODE_TYPES = [
-    'FUNCTION_DEF', 'CLASS_DEF', 
-    'FOR_BLOCK', 'WHILE_BLOCK', 'IF_BLOCK', 
-    'ELIF_BLOCK', 'ELSE_BLOCK', 
+    'FUNCTION_DEF', 'CLASS_DEF',
+    'FOR_BLOCK', 'WHILE_BLOCK', 'IF_BLOCK',
+    'ELIF_BLOCK', 'ELSE_BLOCK',
     'TRY_BLOCK', 'EXCEPT_BLOCK'
 ];
 
@@ -59,6 +63,8 @@ export default function Flow() {
     currentWorld, worldStack, rawGraph,
     isSidebarOpen, toggleSidebar,
     toggleOutput, isOutputOpen,
+    // --- NEW: Code Panel ---
+    isCodeOpen, toggleCode, codeContent,
     injectCode,
     runProject,
     removeNodes,
@@ -90,15 +96,15 @@ export default function Flow() {
   useEffect(() => {
     const handleEnter = (e: any) => enterWorld(e.detail);
     const handleGoTo = (e: any) => goToWorld(e.detail);
-    
+
     window.addEventListener('enter-world', handleEnter);
     window.addEventListener('go-to-world', handleGoTo);
-    
+
     return () => {
         window.removeEventListener('enter-world', handleEnter);
         window.removeEventListener('go-to-world', handleGoTo);
     };
-  }, [enterWorld, goToWorld]); 
+  }, [enterWorld, goToWorld]);
 
   const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
       if (node.type && ZOOMABLE_NODE_TYPES.includes(node.type)) {
@@ -107,12 +113,12 @@ export default function Flow() {
   }, [enterWorld]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
-      e.preventDefault(); e.stopPropagation(); 
+      e.preventDefault(); e.stopPropagation();
       const file = e.dataTransfer.files[0];
       if (file) {
           const reader = new FileReader();
           reader.onload = (ev) => {
-              try { 
+              try {
                   loadGraph(JSON.parse(ev.target?.result as string));
                   setIsFileLoaded(true);
               } catch (err) { alert("Invalid graph JSON"); }
@@ -139,9 +145,9 @@ export default function Flow() {
 
   if (!isFileLoaded) {
     return (
-        <div 
-            className="fixed inset-0 w-screen h-screen bg-slate-950 flex flex-col items-center justify-center pointer-events-auto text-slate-600 z-50" 
-            onDrop={onDrop} 
+        <div
+            className="fixed inset-0 w-screen h-screen bg-slate-950 flex flex-col items-center justify-center pointer-events-auto text-slate-600 z-50"
+            onDrop={onDrop}
             onDragOver={onDragOver}
         >
             <FileJson size={48} className="mb-4 opacity-50" />
@@ -151,15 +157,15 @@ export default function Flow() {
   }
 
   return (
-    <div 
-        className="fixed inset-0 w-screen h-screen bg-slate-950 flex overflow-hidden" 
-        style={{ width: '100%', height: '100%' }} 
-        onDrop={onDrop} 
+    <div
+        className="fixed inset-0 w-screen h-screen bg-slate-950 flex overflow-hidden"
+        style={{ width: '100%', height: '100%' }}
+        onDrop={onDrop}
         onDragOver={onDragOver}
     >
       {/* MAIN LEFT COLUMN (Canvas + Output) */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative">
-        
+
         {/* CANVAS AREA (Flex-1 to take remaining space) */}
         <div className="flex-1 relative min-h-0">
             <ReactFlow
@@ -176,34 +182,34 @@ export default function Flow() {
                 deleteKeyCode={['Backspace', 'Delete']}
                 fitView
                 minZoom={0.1}
-                className="bg-slate-950 h-full"
+                className={`bg-slate-950 h-full ${isCodeOpen ? 'hidden' : ''}`}
             >
                 <Background color="#1e293b" gap={16} />
                 <Controls className="!bg-slate-800 !border-slate-700 [&>button]:!fill-slate-400" />
-                <MiniMap 
+                <MiniMap
                     nodeColor={(n) => {
                         if (n.type === 'FUNCTION_DEF') return '#3b82f6';
                         if (n.type === 'CLASS_DEF') return '#8b5cf6';
                         if (n.type && n.type.endsWith('_BLOCK')) return '#f97316';
                         return '#334155';
                     }}
-                    maskColor="rgba(15, 23, 42, 0.6)" 
-                    className="!bg-slate-900" 
+                    maskColor="rgba(15, 23, 42, 0.6)"
+                    className="!bg-slate-900"
                 />
-                
+
                 {/* FLOATING TOOLBAR */}
-                <Panel 
-                    position="top-right" 
+                <Panel
+                    position="top-right"
                     className={`
-                        flex items-center gap-3 p-2 bg-slate-900/90 backdrop-blur-md rounded-xl border border-slate-800 m-4 
+                        flex items-center gap-3 p-2 bg-slate-900/90 backdrop-blur-md rounded-xl border border-slate-800 m-4
                         transition-all duration-300 ease-in-out
-                        ${isSidebarOpen && isFileLoaded ? 'mr-72' : ''} 
+                        ${isSidebarOpen && isFileLoaded ? 'mr-72' : ''}
                     `}
                 >
                     <div className="flex items-center gap-1 text-sm font-mono mr-2">
                         {buildBreadcrumbPath(rawGraph, worldStack, currentWorld).map((world, i, arr) => (
                             <React.Fragment key={world.id}>
-                                <span 
+                                <span
                                     onClick={() => goToWorld(world.id)}
                                     className={`cursor-pointer px-2 py-1 rounded hover:bg-slate-800 ${i === arr.length - 1 ? 'text-blue-400 font-bold' : 'text-slate-500'}`}
                                 >
@@ -213,18 +219,18 @@ export default function Flow() {
                             </React.Fragment>
                         ))}
                     </div>
-                    
-                    <button 
-                        onClick={goUp} 
+
+                    <button
+                        onClick={goUp}
                         disabled={worldStack.length === 0}
                         className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 text-slate-400 transition-colors"
                     >
                         <ArrowLeft size={20} />
                     </button>
-                    
+
                     <div className="h-6 w-px bg-slate-800" />
 
-                    <button 
+                    <button
                         onClick={() => goToWorld('world_imports')}
                         className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${currentWorld === 'world_imports' ? 'text-blue-400' : ''}`}
                         title="Go to Imports"
@@ -233,14 +239,14 @@ export default function Flow() {
                     </button>
 
                     {/* --- NEW: Toggle Output Button --- */}
-                    <button 
+                    <button
                         onClick={toggleOutput}
                         className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${isOutputOpen ? 'text-blue-400' : ''}`}
                         title="Toggle Output Panel"
                     >
                         <Terminal size={20} />
                     </button>
-                    
+
                     <div className="h-6 w-px bg-slate-800" />
 
                     <button
@@ -273,6 +279,17 @@ export default function Flow() {
 
                     <div className="h-6 w-px bg-slate-800" />
 
+                    {/* --- NEW: Toggle Code Panel Button --- */}
+                    <button
+                        onClick={toggleCode}
+                        className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${isCodeOpen ? 'text-blue-400' : ''}`}
+                        title={isCodeOpen ? "Close Code Panel" : "Open Code Panel"}
+                    >
+                        <Code size={20} />
+                    </button>
+
+                    <div className="h-6 w-px bg-slate-800" />
+
                     <button
                         onClick={toggleSidebar}
                         className={`p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${!isSidebarOpen ? 'text-blue-400' : ''}`}
@@ -281,19 +298,62 @@ export default function Flow() {
                         <Menu size={20} />
                     </button>
                 </Panel>
-                
+
             </ReactFlow>
         </div>
 
         {/* OUTPUT PANEL (At Bottom of Left Column) */}
         {isFileLoaded && <OutputPanel />}
+
+        {/* CODE PANEL (Top layer when open) */}
+        {isCodeOpen && (
+            <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-sm z-20 flex items-center justify-center p-8">
+                <div className="bg-slate-800 rounded-lg border border-slate-600 w-full max-w-4xl h-5/6 flex flex-col">
+                    {/* Code Panel Header */}
+                    <div className="flex items-center justify-between p-4 border-b border-slate-600">
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-1 text-sm font-mono">
+                                {/* Show current world path in code panel */}
+                                {buildBreadcrumbPath(rawGraph, worldStack, currentWorld).map((world, i, arr) => (
+                                    <React.Fragment key={world.id}>
+                                        <span className={i === arr.length - 1 ? 'text-blue-400 font-bold' : 'text-slate-500'}>
+                                            {world.label}
+                                        </span>
+                                        {i < arr.length - 1 && <span className="text-slate-700">/</span>}
+                                    </React.Fragment>
+                                ))}
+                            </div>
+                            <span className="text-slate-400 text-sm">Generated Code</span>
+                        </div>
+
+                        {/* --- EXIT CODE PANEL BUTTON --- */}
+                        <button
+                            onClick={toggleCode}
+                            className="flex items-center gap-2 px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 hover:text-white transition-colors"
+                            title="Close Code Panel"
+                        >
+                            <Code size={16} />
+                            <span className="text-sm">Close</span>
+                        </button>
+                    </div>
+
+                    {/* Code Content */}
+                    <div className="flex-1 p-4 overflow-auto">
+                        <pre className="font-mono text-sm text-green-400 whitespace-pre-wrap h-full">
+                            {codeContent}
+                        </pre>
+                    </div>
+                </div>
+            </div>
+        )}
+
       </div>
-      
+
       {/* RIGHT SIDEBAR (Child 2) */}
       {isFileLoaded && <Sidebar />}
 
       {/* --- NEW: MODAL COMPONENT --- */}
-      <InjectModal 
+      <InjectModal
           isOpen={modalState.isOpen}
           onClose={() => setModalState(prev => ({ ...prev, isOpen: false }))}
           onSubmit={handleInject}

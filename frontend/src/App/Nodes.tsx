@@ -1,11 +1,11 @@
 import React, { memo, useState, useCallback, useMemo } from 'react';
 import { Handle, Position, type NodeProps, useReactFlow, type Edge } from '@xyflow/react';
 import useStore, { type RFState } from './store'; // Import the full store
-import { 
-    Box, Braces, Activity, Database, Type, Calculator, 
-    ArrowRightFromLine, ExternalLink, ChevronDown, ChevronRight, 
-    Share, CornerUpLeft, // Standard Icons
-    
+import {
+    Box, Braces, Activity, Database, Type, Calculator,
+    ArrowRightFromLine, ExternalLink, ChevronDown, ChevronRight,
+    Share, CornerUpLeft, Code, X, // Standard Icons
+
     // --- NEW ICONS ---
     Repeat,         // for FOR_BLOCK
     Repeat1,        // for WHILE_BLOCK
@@ -138,7 +138,10 @@ const BlenderNode = memo((props: { id: string, data: any, icon: React.ElementTyp
     const { id: nodeId, data, icon: Icon, color, children, hasOutput = true, outputLabel = "value" } = props;
     const [isExpanded, setIsExpanded] = useState(false);
     const [showUsages, setShowUsages] = useState(false);
-    
+    const [showCode, setShowCode] = useState(false);
+    const [codeSnippet, setCodeSnippet] = useState('');
+
+    const fetchNodeCode = useStore(s => s.fetchNodeCode);
     const { getEdges } = useReactFlow();
 
     const portDefaults = data.port_defaults || {};
@@ -157,7 +160,14 @@ const BlenderNode = memo((props: { id: string, data: any, icon: React.ElementTyp
 
     const handleUsageJump = (worldId: string) => {
         window.dispatchEvent(new CustomEvent('go-to-world', { detail: worldId }));
-        setShowUsages(false); 
+        setShowUsages(false);
+    };
+
+    const handleShowCode = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        const code = await fetchNodeCode(nodeId);
+        setCodeSnippet(code);
+        setShowCode(true);
     };
     
     const renderPort = (p: any) => (
@@ -180,6 +190,16 @@ const BlenderNode = memo((props: { id: string, data: any, icon: React.ElementTyp
             <div className="flex items-center gap-2 p-2 border-b" style={{ borderColor: color }}>
                 <Icon className="w-4 h-4" style={{ color: color }} />
                 <span className="text-sm font-bold truncate text-slate-100">{data.label}</span>
+
+                {/* --- NEW: Code Button --- */}
+                <button
+                    onClick={handleShowCode}
+                    className="ml-auto p-1 text-slate-500 hover:text-slate-100"
+                    title="View Code"
+                >
+                    <Code size={12} />
+                </button>
+
                 {children}
             </div>
 
@@ -228,8 +248,22 @@ const BlenderNode = memo((props: { id: string, data: any, icon: React.ElementTyp
                 )}
             </div>
 
+            {/* --- NEW: Simple Code Modal --- */}
+            {showCode && (
+                <div
+                    className="absolute z-50 top-full left-0 mt-2 w-64 bg-slate-900 border border-slate-600 rounded shadow-2xl p-2 text-[10px] font-mono text-green-400"
+                    onMouseDown={e => e.stopPropagation()}
+                >
+                    <div className="flex justify-between mb-1 border-b border-slate-700 pb-1">
+                         <span>Synthesized Code</span>
+                         <button onClick={() => setShowCode(false)}><X size={12}/></button>
+                    </div>
+                    <pre className="whitespace-pre-wrap overflow-x-auto">{codeSnippet}</pre>
+                </div>
+            )}
+
             {hasOptional && (
-                <button 
+                <button
                     onClick={() => setIsExpanded(prev => !prev)}
                     className="w-full flex items-center justify-center p-1 border-t border-slate-700 text-slate-500 hover:text-slate-300 hover:bg-slate-700/50"
                 >

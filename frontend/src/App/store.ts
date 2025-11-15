@@ -122,6 +122,12 @@ export type RFState = {
   history: GraphData[];
   historyIndex: number;
 
+  // --- NEW: Code Panel State ---
+  isCodeOpen: boolean;
+  codeContent: string;
+  toggleCode: () => void;
+  fetchNodeCode: (nodeId: string) => Promise<string>;
+
   // Actions
   onNodesChange: OnNodesChange;
   onEdgesChange: OnEdgesChange;
@@ -404,6 +410,10 @@ const useStore = create<RFState>((set, get) => ({
   outputLogs: ["System ready."],
   canUndo: false,
   canRedo: false,
+
+  // --- NEW: Code Panel State ---
+  isCodeOpen: false,
+  codeContent: '',
 
   // History tracking - TODO: Implement later
   history: [] as GraphData[],
@@ -722,6 +732,40 @@ const useStore = create<RFState>((set, get) => ({
           }
       } catch (error: any) {
           addOutputLog(`❌ Error updating dict pair: ${error.message}`);
+      }
+  },
+
+  // --- NEW: Code Panel Actions ---
+  toggleCode: () => {
+      const { isCodeOpen } = get();
+      if (!isCodeOpen) {
+          // Switching TO Code Panel: Fetch code for current world
+          const { rawGraph, currentWorld } = get();
+          // Use setStateApproximation to set code content
+          (async () => {
+              try {
+                  const result = await api.synthesize(rawGraph, undefined, currentWorld);
+                  if (result.success) {
+                      set({ isCodeOpen: true, codeContent: result.code });
+                  }
+              } catch (e) {
+                  console.error(e);
+                  set({ isCodeOpen: true, codeContent: "# Error fetching code" });
+              }
+          })();
+      } else {
+          // Switching OFF Code Panel
+          set({ isCodeOpen: false });
+      }
+  },
+
+  fetchNodeCode: async (nodeId: string) => {
+      const { rawGraph } = get();
+      try {
+          const result = await api.synthesize(rawGraph, nodeId);
+          return result.success ? result.code : "# Error";
+      } catch (e) {
+          return "# Error";
       }
   },
 

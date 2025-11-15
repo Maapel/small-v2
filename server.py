@@ -32,6 +32,11 @@ class InjectRequest(BaseModel):
     code: str
     worldId: str
 
+class SynthesizeRequest(BaseModel):
+    graph: dict
+    nodeId: str = None
+    worldId: str = None
+
 class RunRequest(BaseModel):
     graph: dict
 
@@ -131,6 +136,39 @@ def run_code_endpoint(req: RunRequest):
             "success": False,
             "output": str(e)
         }
+
+@app.post("/synthesize")
+def synthesize_endpoint(req: SynthesizeRequest):
+    """
+    Synthesizes code from the graph for debugging/viewing.
+    Can synthesize full code, world-specific code, or single-node code.
+    """
+    try:
+        # Create a synthesizer instance with the provided graph
+        class GraphSynthesizer(Synthesizer):
+            def __init__(self, graph_data):
+                self.graph = graph_data
+
+        synth = GraphSynthesizer(req.graph)
+
+        code = ""
+        if req.nodeId:
+            code = synth.generate_node_code(req.nodeId)
+        elif req.worldId:
+            # If worldId is provided, synthesize JUST that world (no imports, no root)
+            # Unless it is root
+            if req.worldId == "root":
+                code = synth.generate_code()
+            else:
+                # Manually call internal method for world
+                lines = synth._write_world(req.worldId, 0)
+                code = "\n".join(lines)
+        else:
+            code = synth.generate_code()
+
+        return {"success": True, "code": code}
+    except Exception as e:
+        return {"success": False, "code": f"# Error: {str(e)}"}
 
 @app.get("/health")
 def health_check():

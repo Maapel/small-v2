@@ -132,5 +132,16 @@ export const api = {
         });
         if (!response.ok) throw new Error('Failed to update dict pair');
         return response.json();
+    },
+
+    // --- NEW: Code synthesis for debugging ---
+    synthesize: async (graph: any, nodeId?: string, worldId?: string) => {
+        const response = await fetch(`${API_URL}/synthesize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ graph, nodeId, worldId }),
+        });
+        if (!response.ok) throw new Error('Failed to synthesize code');
+        return response.json();
     }
 };
