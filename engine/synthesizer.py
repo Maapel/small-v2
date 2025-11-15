@@ -98,6 +98,12 @@ class Synthesizer:
                     arg_strs.append(f"{port_name}={self._synth_expr(wired_args[port_key_kw])}")
                 elif port_key_idx in wired_args:
                     arg_strs.append(self._synth_expr(wired_args[port_key_idx]))
+                elif port_name in port_defaults:
+                    # Handle positional arguments with port defaults
+                    arg_strs.append(port_defaults[port_name])
+                else:
+                    # For unlinked parameters, use None or default
+                    arg_strs.append("None")
 
             call_str = f"{node['label']}({', '.join(arg_strs)})"
 
@@ -181,40 +187,81 @@ class Synthesizer:
         lines = []
         pre = "    " * indent
         world_nodes = [n for n in self.graph['nodes'] if n['world'] == world_id]
-        
+
+        # Sort nodes to ensure proper execution order in function bodies
+        if world_id != 'root':
+            # In function worlds, put executable statements (CALL) before control flow (RETURN)
+            def sort_key(node):
+                priority = {
+                    'CALL': 1,      # Executable statements first
+                    'VARIABLE': 2,  # Variable assignments second
+                    'RETURN': 3,    # Return last
+                    'OTHER': 4      # Everything else
+                }
+                return priority.get(node['type'], priority['OTHER'])
+
+            world_nodes.sort(key=sort_key)
+            print(f"DEBUG: _write_world({world_id}, indent={indent}) - found {len(world_nodes)} nodes (sorted for execution order)")
+
+        print(f"DEBUG: _write_world({world_id}, indent={indent}) - processing {len(world_nodes)} nodes")
+
         if processed_ids is None:
             processed_ids = set()
 
         for node in world_nodes:
             if node['id'] in processed_ids:
+                print(f"DEBUG: Skipping already processed node {node['id']}")
                 continue
-            
+
             processed_ids.add(node['id'])
             ntype = node['type']
+            print(f"DEBUG: Processing {ntype} node {node['id']} with label '{node.get('label', 'N/A')}'")
 
             if ntype == 'IMPORT':
                 lines.append(f"{pre}{node['label']}")
+                print(f"DEBUG: Added import: {node['label']}")
             elif ntype == 'FUNCTION_DEF':
                 params = node['data'].get('params', [])
                 param_names = [p['name'] for p in params]
                 lines.append(f"\n{pre}def {node['label']}({', '.join(param_names)}):")
-                body = self._write_world(node['id'], indent + 1)
+                print(f"DEBUG: Added function def: {node['label']}({', '.join(param_names)})")
+                body = self._write_world(node['id'], indent + 1, processed_ids)
                 lines.extend(body if body else [f"{pre}    pass"])
+                print(f"DEBUG: Function body has {len(body) if body else 0} lines")
             elif ntype == 'VARIABLE' and node['data'].get('mode') == 'write':
                 inputs = self._get_inputs(node['id'], ["WRITES_TO"])
-                if inputs: lines.append(f"{pre}{node['label']} = {self._synth_expr(inputs[0])}")
+                if inputs:
+                    expr = f"{pre}{node['label']} = {self._synth_expr(inputs[0])}"
+                    lines.append(expr)
+                    print(f"DEBUG: Added variable assignment: {expr}")
+                else:
+                    print(f"DEBUG: Variable {node['id']} has no WRITES_TO inputs")
             elif ntype == 'CALL':
                  is_nested = any(e['source'] == node['id'] and e['type'] not in ['CLOSURE_OF', 'NEXT_CLAUSE'] for e in self.graph['edges'])
-                 if not is_nested: lines.append(f"{pre}{self._synth_expr(node['id'])}")
+                 print(f"DEBUG: CALL {node['id']} is_nested={is_nested}")
+
+                 # Special handling: In function worlds, injected code might be standalone
+                 # but should still execute. For now, include all CALL nodes in function bodies.
+                 in_function_body = world_id != 'root'
+                 should_include = not is_nested or in_function_body
+
+                 if should_include:
+                     expr = f"{pre}{self._synth_expr(node['id'])}"
+                     lines.append(expr)
+                     print(f"DEBUG: Added CALL: {expr}")
+                 else:
+                     print(f"DEBUG: Skipping nested CALL {node['id']}")
             elif ntype == 'RETURN':
                 inputs = self._get_inputs(node['id'], ["INPUT"])
-                lines.append(f"{pre}return {self._synth_expr(inputs[0])}" if inputs else f"{pre}return")
-            
+                expr = f"{pre}return {self._synth_expr(inputs[0])}" if inputs else f"{pre}return"
+                lines.append(expr)
+                print(f"DEBUG: Added return: {expr}")
+
             elif ntype == 'IF_BLOCK':
                 lines.extend(self._synth_if_chain(node, indent, processed_ids))
             elif ntype in ['ELIF_BLOCK', 'ELSE_BLOCK']:
-                continue 
-                
+                continue
+
             elif ntype == 'FOR_BLOCK':
                 iter_inputs = self._get_inputs(node['id'], ["ITERATES_ON"])
                 if iter_inputs:
@@ -223,7 +270,7 @@ class Synthesizer:
                     iter_str = "[]"  # Default empty list
                 target_str = node['data'].get('target', 'item')
                 lines.append(f"\n{pre}for {target_str} in {iter_str}:")
-                body = self._write_world(node['id'], indent + 1)
+                body = self._write_world(node['id'], indent + 1, processed_ids)
                 lines.extend(body if body else [f"{pre}    pass"])
             elif ntype == 'WHILE_BLOCK':
                 test_inputs = self._get_inputs(node['id'], ["INPUT"])
@@ -232,21 +279,22 @@ class Synthesizer:
                 else:
                     test_str = "True"  # Default to always true
                 lines.append(f"\n{pre}while {test_str}:")
-                body = self._write_world(node['id'], indent + 1)
+                body = self._write_world(node['id'], indent + 1, processed_ids)
                 lines.extend(body if body else [f"{pre}    pass"])
             elif ntype == 'TRY_BLOCK':
                 lines.append(f"\n{pre}try:")
-                body = self._write_world(node['id'], indent + 1)
+                body = self._write_world(node['id'], indent + 1, processed_ids)
                 lines.extend(body if body else [f"{pre}    pass"])
-                
+
                 except_ids = self._get_outputs(node['id'], ["NEXT_CLAUSE"])
                 for ex_id in except_ids:
                     ex_node = self._get_node(ex_id)
                     processed_ids.add(ex_id)
                     lines.append(f"{pre}{ex_node['label']}:")
-                    ex_body = self._write_world(ex_id, indent + 1)
+                    ex_body = self._write_world(ex_id, indent + 1, processed_ids)
                     lines.extend(ex_body if ex_body else [f"{pre}    pass"])
-                    
+
+        print(f"DEBUG: _write_world({world_id}) returning {len(lines)} lines")
         return lines
 
     # --- UPDATED: generate_code ---

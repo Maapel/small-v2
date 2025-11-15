@@ -521,8 +521,11 @@ class WorldVisitor(cst.CSTVisitor):
 # --- INJECTION ---
 def inject_code(existing_graph, code_snippet, target_world="root"):
     try:
+        print(f"DEBUG: inject_code called with target_world='{target_world}', code='{code_snippet.strip()}'")
+
         tree = cst.parse_module(code_snippet)
         visitor = WorldVisitor(start_world=target_world)
+        print(f"DEBUG: Created WorldVisitor with start_world='{target_world}'")
 
         # Pre-populate symbol table from existing graph for proper variable linking
         # Build symbol table by traversing existing nodes
@@ -531,6 +534,7 @@ def inject_code(existing_graph, code_snippet, target_world="root"):
                 parent_stack = []
 
             world_nodes = [n for n in existing_graph['nodes'] if n['world'] == world_id]
+            print(f"DEBUG: populate_symbols for world_id='{world_id}' found {len(world_nodes)} nodes")
 
             # Push scope for this world
             visitor.symbols.push_scope()
@@ -539,8 +543,10 @@ def inject_code(existing_graph, code_snippet, target_world="root"):
                 if node['type'] == 'VARIABLE':
                     # Add to symbol table
                     visitor.symbols.define_write(node['label'], node['id'], world_id)
+                    print(f"DEBUG: Added VARIABLE {node['label']} to symbol table for world {world_id}")
                 elif node['type'] in ['FUNCTION_DEF', 'CLASS_DEF']:
                     # Recursively populate nested worlds
+                    print(f"DEBUG: Recursively populating symbols for nested world {node['id']}")
                     populate_symbols(node['id'], visitor, parent_stack + [world_id])
 
             # Don't pop the root scope
@@ -553,14 +559,25 @@ def inject_code(existing_graph, code_snippet, target_world="root"):
         # Switch to target world for injection
         visitor.current_world = target_world
         visitor.world_stack = [target_world]  # Reset world stack for injection
+        print(f"DEBUG: Switched to target_world='{target_world}' for injection")
 
         tree.visit(visitor)
+        print(f"DEBUG: AST visiting complete, created {len(visitor.graph['nodes'])} nodes and {len(visitor.graph['edges'])} edges")
+
         visitor.link_calls()
         visitor.hydrate_unlinked_calls()
+
+        print(f"DEBUG: Extending existing_graph with new nodes/edges")
         existing_graph['nodes'].extend(visitor.graph['nodes'])
         existing_graph['edges'].extend(visitor.graph['edges'])
+
+        print(f"DEBUG: inject_code returning success with {len(visitor.graph['nodes'])} new nodes")
         return True, len(visitor.graph['nodes'])
-    except Exception as e: return False, str(e)
+    except Exception as e:
+        import traceback
+        print(f"ERROR: inject_code failed with target_world='{target_world}': {e}")
+        traceback.print_exc()
+        return False, str(e)
 
 # --- NEW HELPER: Remove Nodes ---
 def remove_nodes(graph: dict, node_ids: list[str]) -> dict:

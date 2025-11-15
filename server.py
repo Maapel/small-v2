@@ -97,31 +97,29 @@ class UpdateDictPairRequest(BaseModel):
 def run_code_endpoint(req: RunRequest):
     """
     Synthesizes the graph into Python code and executes it.
+    Uses the graph provided in the request (with any injections/updates).
     Returns the stdout.
     """
     try:
-        # 1. Save graph to a temporary file for the Synthesizer
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp:
-            json.dump(req.graph, tmp)
-            tmp_path = tmp.name
+        # Create a synthesizer instance with the provided graph
+        class GraphSynthesizer(Synthesizer):
+            def __init__(self, graph_data):
+                self.graph = graph_data
 
-        # 2. Synthesize code
-        synth = Synthesizer(tmp_path)
+        # 2. Synthesize code using the provided graph
+        synth = GraphSynthesizer(req.graph)
         code = synth.generate_code()
-        
+
         # 3. Execute and capture output
         f = io.StringIO()
         with contextlib.redirect_stdout(f):
             try:
-                # Use a restricted global scope for safety if needed, 
+                # Use a restricted global scope for safety if needed,
                 # currently using standard globals for full functionality
                 exec(code, {"__builtins__": __builtins__})
             except Exception as e:
                 print(f"Runtime Error: {e}")
-        
-        # Cleanup
-        os.remove(tmp_path)
-        
+
         return {
             "success": True,
             "output": f.getvalue(),
